@@ -1,3 +1,5 @@
+# COPILOT
+
 import quilt3 as q3
 import os
 import json
@@ -81,7 +83,7 @@ def get_all(names, bucket, folder):
         downloaded = False
         try:
             # Download
-            filename = folder + name + ".zarr" # !!! / is an important difference, not the same as destination_name
+            filename = folder + "datasets/" + name + ".zarr" # !!! / is an important difference, not the same as destination_name
             folders_to_ignore = ["masks"]
             get_folder_parallel(b, 
                                 f"{name}/{name}.zarr/recon-1/", 
@@ -89,7 +91,7 @@ def get_all(names, bucket, folder):
                                 folder, 128, folders_to_ignore)
             downloaded = True
             # Convert
-            h5_name = folder + name + ".h5"
+            h5_name = folder + "datasets/" + name + ".h5"
             zarr_to_h5(filename, h5_name)
             n_downloaded += 1
         except Exception as e:
@@ -173,13 +175,13 @@ if __name__ == "__main__":
     ]
 
     names_with_labels = [
-        "jrc_hela-2",             # 70 GB   # 12 GB after only 8nm # 36GB in h5??
-        "jrc_macrophage-2",       # 96 GB   # 15 GB     # 39GB
-        "jrc_jurkat-1",           # 123 GB  # 20 GB     # 44GB
-        "jrc_hela-3",             # 133 GB  # 18 GB     # 
-        "jrc_ctl-id8-1",          # 235 GB  
-        "jrc_mus-kidney"          # unknown # 
-        # "jrc_mus-liver",          # 1.12 TB # Too big
+        # "jrc_hela-2",             # 70 GB   # 12 GB after only 8nm # 36GB in h5??
+        # "jrc_macrophage-2",       # 96 GB   # 15 GB     # 39GB
+        # "jrc_jurkat-1",           # 123 GB  # 20 GB     # 44GB
+        # "jrc_hela-3",             # 133 GB  # 18 GB     # 
+        # "jrc_ctl-id8-1",          # 235 GB  # ?         # 86G
+        # "jrc_mus-kidney"          # unknown # 
+        "jrc_mus-liver",          # 1.12 TB # Too big
         # "jrc_sum159-1",           # 13.9 TB
     ]
 

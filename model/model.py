@@ -4,6 +4,7 @@ import h5py
 import numpy as np
 from glob import glob
 import napari
+import os
 
 import imageio.v3 as imageio
 from matplotlib import colors
@@ -14,35 +15,36 @@ from torch_em.util.debug import check_loader
 from torch_em import default_segmentation_dataset, get_data_loader
 from torch_em.transform.label import labels_to_binary, BoundaryTransform
 from torch_em.model import UNet3d
+from model_utils import *
 
-DATA_DIR = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files"
-
+DATA_DIR = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/datasets/"
+LABELS_DIR = ""
+RAW_DIR = ""
 model = UNet3d(1,1)
 
-def get_random_colors(labels):
-    n_labels = len(np.unique(labels)) - 1
-    cmap = [[0, 0, 0]] + np.random.rand(n_labels, 3).tolist()
-    cmap = colors.ListedColormap(cmap)
-    return cmap
+# Get all files
+volume_paths = glob(os.path.join(DATA_DIR, "*"))
 
-def plot_samples(image, labels, cmap="gray", view_napari=False):
-    def _get_mpl_plots(image, labels):
-        fig, ax = plt.subplots(1, 2)
+volume = volume_paths[0]
+print("The volume extension seems to be:", os.path.splitext(volume_paths[0])[-1])
+# with h5py.File(volume) as f:
+#     # This fails :/
+#     image = f["recon-1/em/fibsem-uint8/s0"][:]  # files/jrc_mus-liver.zarr/recon-1/em/fibsem-uint8/s0
+#     label = f["recon-1/labels/groundtruth"][:]  # files/jrc_mus-liver.zarr/recon-1/labels/groundtruth
 
-        ax[0].imshow(image, cmap=cmap)
-        ax[0].axis("off")
-        ax[0].set_title("Image")
+#     print("The image volume and label volume respectively are:", image.shape, label.shape)
+#     plot_samples(image, label, view_napari=True)
 
-        ax[1].imshow(labels, cmap=get_random_colors(labels), interpolation="nearest")
-        ax[1].axis("off")
-        ax[1].set_title("Labels")
-        plt.show()
+# datasets parameters
+patch_shape = (1, 512, 512)
+volume_paths = glob(os.path.join(DATA_DIR, "*.h5"))  # paths of all the volumes
 
-    if view_napari:
-    
-        v = napari.Viewer()
-        v.add_image(image)
-        v.add_labels(labels)
-        napari.run()
-    else:
-        _get_mpl_plots(image, labels)
+dataset = default_segmentation_dataset(
+    raw_paths=volume_paths,
+    raw_key=RAW_DIR,  # this is the hierarchy in the hdf5 files, where the images are stored
+    label_paths=volume_paths,
+    label_key=LABELS_DIR,   # this is the hierarchy in the hdf5 files, where the labels are stored
+    patch_shape=patch_shape,
+    label_transform=BoundaryTransform(),  # remember the task above for semantic boundary labels? this function takes care of it.*
+    ndim=2,
+)
