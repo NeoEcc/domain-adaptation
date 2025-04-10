@@ -173,10 +173,10 @@ if __name__ == "__main__":
     ]
 
     names_with_labels = [
-        "jrc_hela-2",             # 70 GB   # 12GB after only 8nm # 36GB in h5??
-        "jrc_macrophage-2",       # 96 GB   # 15
-        "jrc_jurkat-1",           # 123 GB  # 20
-        "jrc_hela-3",             # 133 GB  # 18
+        "jrc_hela-2",             # 70 GB   # 12 GB after only 8nm # 36GB in h5??
+        "jrc_macrophage-2",       # 96 GB   # 15 GB     # 39GB
+        "jrc_jurkat-1",           # 123 GB  # 20 GB     # 44GB
+        "jrc_hela-3",             # 133 GB  # 18 GB     # 
         "jrc_ctl-id8-1",          # 235 GB  
         "jrc_mus-kidney"          # unknown # 
         # "jrc_mus-liver",          # 1.12 TB # Too big

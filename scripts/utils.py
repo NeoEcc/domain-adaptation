@@ -244,7 +244,7 @@ def get_folder_parallel(bucket, path, download_path, name="s0", max_threads=None
 
         print("Finished exploring folders. Found "+ str(len(folders_to_download)) + f" folders to download in {mid-start}s. Downloading...")
         # Save list to file
-        file_path = f"{os.path.dirname(os.path.dirname(download_path))}/txt/to_download_{os.path.splitext(os.path.basename(download_path[:-1]))[0]}.txt"
+        file_path = f"{os.path.dirname(os.path.dirname(download_path))}/files/txt/to_download_{os.path.splitext(os.path.basename(download_path[:-1]))[0]}.txt"
         
         # Ensure the directory exists
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
