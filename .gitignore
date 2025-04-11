@@ -2,3 +2,6 @@ files/*
 !files/README.md
 scripts/__pycache__
 txt
+torch-em
+# Alias for "-" errors
+torchlocal
