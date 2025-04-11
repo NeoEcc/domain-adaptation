@@ -10,41 +10,50 @@ import imageio.v3 as imageio
 from matplotlib import colors
 import matplotlib.pyplot as plt
 
-from torch_em.data import datasets
+
+
+# import sys
+# sys.path.append("/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/torch-em")
+from torch_em.data.datasets.electron_microscopy import cellmap
+
 from torch_em.util.debug import check_loader
 from torch_em import default_segmentation_dataset, get_data_loader
 from torch_em.transform.label import labels_to_binary, BoundaryTransform
 from torch_em.model import UNet3d
+from torch_em.data import SegmentationDataset
 from model_utils import *
 
+# Adapt  torch-em/torch em/data/datasets/electron microscopy/cellmap.py
+BATCH_SIZE = 4
 DATA_DIR = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/datasets/"
-LABELS_DIR = ""
-RAW_DIR = ""
+NAMES = [
+        "jrc_hela-2",             # 70 GB   # 12 GB     # 36GB in h5??
+        "jrc_macrophage-2",       # 96 GB   # 15 GB     # 39GB
+        "jrc_jurkat-1",           # 123 GB  # 20 GB     # 44GB
+        "jrc_hela-3",             # 133 GB  # 18 GB     # 
+        "jrc_ctl-id8-1",          # 235 GB  # ?         # 86G
+    ]
+
+# Instantiate model: 3d, b&w, 54 classes so 1->1? 
 model = UNet3d(1,1)
+# print(model)
 
-# Get all files
-volume_paths = glob(os.path.join(DATA_DIR, "*"))
-
-volume = volume_paths[0]
-print("The volume extension seems to be:", os.path.splitext(volume_paths[0])[-1])
-# with h5py.File(volume) as f:
-#     # This fails :/
-#     image = f["recon-1/em/fibsem-uint8/s0"][:]  # files/jrc_mus-liver.zarr/recon-1/em/fibsem-uint8/s0
-#     label = f["recon-1/labels/groundtruth"][:]  # files/jrc_mus-liver.zarr/recon-1/labels/groundtruth
-
-#     print("The image volume and label volume respectively are:", image.shape, label.shape)
-#     plot_samples(image, label, view_napari=True)
-
-# datasets parameters
-patch_shape = (1, 512, 512)
-volume_paths = glob(os.path.join(DATA_DIR, "*.h5"))  # paths of all the volumes
-
-dataset = default_segmentation_dataset(
-    raw_paths=volume_paths,
-    raw_key=RAW_DIR,  # this is the hierarchy in the hdf5 files, where the images are stored
-    label_paths=volume_paths,
-    label_key=LABELS_DIR,   # this is the hierarchy in the hdf5 files, where the labels are stored
-    patch_shape=patch_shape,
-    label_transform=BoundaryTransform(),  # remember the task above for semantic boundary labels? this function takes care of it.*
-    ndim=2,
+# paths = []
+# for name in NAMES:
+#     paths.append(f"{DATA_DIR}{name}.h5")
+paths = f"{DATA_DIR}jrc_hela-2.h5"
+print("[PATHS] " + paths)
+key = "recon-1/"
+# Create dataset
+dataset = SegmentationDataset(
+    raw_path = paths,
+    raw_key = f"{key}em/fibsem-uint8/", # I hope, optional
+    patch_shape = (1,128,128),
+    label_path = paths,
+    label_key = f"{key}labels/",
+    ndim=3
 )
+print(dataset)
+
+# Get dataloader
+dataloader = get_data_loader(dataset, BATCH_SIZE, )
