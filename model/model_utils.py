@@ -8,7 +8,6 @@ import imageio.v3 as imageio
 from matplotlib import colors
 import matplotlib.pyplot as plt
 
-from torch_em.data import datasets
 
 def get_random_colors(labels):
     n_labels = len(np.unique(labels)) - 1

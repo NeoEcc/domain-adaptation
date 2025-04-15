@@ -38,22 +38,19 @@ NAMES = [
 model = UNet3d(1,1)
 # print(model)
 
-# paths = []
-# for name in NAMES:
-#     paths.append(f"{DATA_DIR}{name}.h5")
 paths = f"{DATA_DIR}jrc_hela-2.h5"
 print("[PATHS] " + paths)
 key = "recon-1/"
 # Create dataset
 dataset = SegmentationDataset(
     raw_path = paths,
-    raw_key = f"{key}em/fibsem-uint8/", # I hope, optional
-    patch_shape = (1,128,128),
+    raw_key = "/recon-1/em/fibsem-uint8/s1", # get to s_
+    patch_shape = (200,200,200), # Replace with real shape
     label_path = paths,
-    label_key = f"{key}labels/",
+    label_key = "/recon-1/labels/groundtruth/crop96/perox_mem/s1",    # Get to dataset
     ndim=3
 )
 print(dataset)
 
-# Get dataloader
 dataloader = get_data_loader(dataset, BATCH_SIZE, )
+# Get dataloader

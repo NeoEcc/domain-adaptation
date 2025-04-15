@@ -3,5 +3,5 @@ files/*
 scripts/__pycache__
 txt
 torch-em
-# Alias for "-" errors
-torchlocal
+.vscode
+torch-em

@@ -31,7 +31,6 @@ def read_data(path):
     recursive_read(root)
     return data
 
-
 def export_data(export_path: str, data):
     """Export data to the specified path, determining format from the file extension.
     
@@ -103,8 +102,56 @@ def zarr_to_h5(zarr_path: str, export_path=None, delete = True):
         else:
             print("Zarr file not found for deletion.") # Should not happen
 
-if __name__ == "__main__":
-    print("[zarr_hdf5.py]")
+def get_only_mito(file_path, path_to_groundtruth="/recon-1/labels/groundtruth/", path_to_sample="/recon-1/em/fibsem-uint8/"):
+    """
+    Takes an h5 file and returns the same file keeping only the correct mito folders in `path_to_groundtruth`, 
+    renaming the file from 'x.h5' to 'x_mito.h5'.
 
-    path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/jrc_fly-larva-1.zarr"
-    zarr_to_h5(path, delete=False)
+    - Sample: "/recon-1/em/fibsem-uint8/s_"
+    - Ground truth: "/recon-1/labels/groundtruth/crop___/mito/s_"
+    """
+
+    data = {}
+    # Get the list of the paths to follow
+    parts = list(filter(None, path_to_groundtruth.split("/")))
+    parts2 = list(filter(None, path_to_sample.split("/")))
+    print(parts)
+    print(parts2)
+    # ['recon-1', 'labels', 'groundtruth']
+    # ['recon-1', 'em', 'fibsem-uint8']
+    
+    # Case 1: find sample
+    
+    
+    # Open file
+    with h5py.File(file_path, "r") as f:
+        # Function to iterate in the h5
+        def collect_items(h5_group, path=""):
+            # Check all items
+            for key in h5_group:
+                item = h5_group[key]
+                full_path = os.path.join(path, key)
+                # If we find a group, open it
+                if isinstance(item, h5py.Group):
+                    # If we are still looking, proceed
+                    if parts.__len__ > 0:
+                        if key == parts.pop():
+                            collect_items(item, full_path)
+                    # If we got in the place after the path, open all crops
+                    else:
+                        # In this case, we should have a list of crops. Check if there is mito in all of them and save that.
+                        for crops in item:
+                            if "mito" in crops:
+                                # If it is, save it
+                                data[full_path] = item[crops][()]
+                # Fully discard everything if it is not the group we want AND we are still looking
+
+    output_path = file_path.replace(".h5", "_mito.h5")
+    export_data(output_path, data)
+    print(f"Finished transforming h5 {output_path}")
+
+if __name__ == "__main__":
+    print("[zarr_utils.py]")
+    path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/datasets/jrc_hela-2.h5"
+    get_only_mito(path)
+    # zarr_to_h5(path, delete=False)
