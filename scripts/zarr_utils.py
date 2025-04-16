@@ -5,6 +5,8 @@ import numpy as np
 import mrcfile
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 
 # Most functions not made by me
 # https://github.com/lufre1/synapse/blob/main/synapse/io/util.py
@@ -102,7 +104,51 @@ def zarr_to_h5(zarr_path: str, export_path=None, delete = True):
         else:
             print("Zarr file not found for deletion.") # Should not happen
 
-def get_only_mito(file_path, path_to_groundtruth="/recon-1/labels/groundtruth/", path_to_sample="/recon-1/em/fibsem-uint8/"):
+def read_folder_h5(f, current_path, folders_to_ignore, names):
+    """
+    Reads a folder and returns the folders to explore and data to keep.
+    """
+    # Read the data
+    folders_to_save = []
+    folders_to_explore = []
+
+    # Get all items in the curent hdf5 folder
+    items = list(f[current_path].keys())
+    # print(f"Items found in {current_path}: {items}")
+    for item in items:
+        # print (f"Exploring {item} in {current_path}")
+        if item in names:
+            # Case we found it. Add item to dictionary as key, value
+            folders_to_save.append(current_path + item + "/")
+        elif item not in folders_to_ignore:
+            # Pass from string to object
+            item_obj = f[current_path + item]
+            # Separate ccase group and dataset
+            if isinstance(item_obj, h5py.Group):
+                # If group, explore deeper
+                folders_to_explore.append(current_path + item + "/") 
+                # print(f"Found {current_path + item + '/'}" )
+            # Otherwise, ignore.
+
+    return folders_to_explore, folders_to_save
+
+def save_folder(f, current_path):
+    """
+    Saves a folder to the data dictionary, or recursively open a folder until a dataset is found
+    """
+    data = {}
+    # Read the data
+    items = list(f[current_path].keys())
+    for item in items:
+        # print(isinstance(item, str))
+        # pass from string to object in the test
+        if isinstance(f[current_path + item], h5py.Dataset):
+            data[current_path + item] = f[current_path + item][:]
+        elif isinstance(f[current_path + item], h5py.Group):
+            data = data | save_folder(f, current_path + item + "/", data)
+    return data
+
+def get_only_mito(file_path, names=["mito", "fibsem-uint8"], max_threads=None, folders_to_ignore=[]):
     """
     Takes an h5 file and returns the same file keeping only the correct mito folders in `path_to_groundtruth`, 
     renaming the file from 'x.h5' to 'x_mito.h5'.
@@ -111,47 +157,110 @@ def get_only_mito(file_path, path_to_groundtruth="/recon-1/labels/groundtruth/",
     - Ground truth: "/recon-1/labels/groundtruth/crop___/mito/s_"
     """
 
+    max_threads = max_threads or os.cpu_count()
+    folders_to_explore = ["/"]
+    folders_to_save = []
     data = {}
-    # Get the list of the paths to follow
-    parts = list(filter(None, path_to_groundtruth.split("/")))
-    parts2 = list(filter(None, path_to_sample.split("/")))
-    print(parts)
-    print(parts2)
-    # ['recon-1', 'labels', 'groundtruth']
-    # ['recon-1', 'em', 'fibsem-uint8']
-    
-    # Case 1: find sample
-    
-    
-    # Open file
-    with h5py.File(file_path, "r") as f:
-        # Function to iterate in the h5
-        def collect_items(h5_group, path=""):
-            # Check all items
-            for key in h5_group:
-                item = h5_group[key]
-                full_path = os.path.join(path, key)
-                # If we find a group, open it
-                if isinstance(item, h5py.Group):
-                    # If we are still looking, proceed
-                    if parts.__len__ > 0:
-                        if key == parts.pop():
-                            collect_items(item, full_path)
-                    # If we got in the place after the path, open all crops
-                    else:
-                        # In this case, we should have a list of crops. Check if there is mito in all of them and save that.
-                        for crops in item:
-                            if "mito" in crops:
-                                # If it is, save it
-                                data[full_path] = item[crops][()]
-                # Fully discard everything if it is not the group we want AND we are still looking
+    f = h5py.File(file_path, "r")
+    # Adapred from parallel reaed and download in utils.py
+    # Multithreaded read
+    print("Exploring folders in " + file_path)
+    while folders_to_explore:
+    # Pop up to max_threads items
+        batch = []
+        while folders_to_explore and (len(batch) < max_threads):
+            batch.append(folders_to_explore.pop())
+        print("Starting work for " + str(len(batch)) + " workers")
+        with ThreadPoolExecutor(max_workers=max_threads) as executor:
+            futures = [
+                executor.submit(read_folder_h5, f, current_path, folders_to_ignore, names)
+                for current_path in batch
+            ]
 
+            for future in as_completed(futures):
+                try:
+                    to_explore, to_save = future.result()
+                    folders_to_explore.extend(to_explore)
+                    folders_to_save.extend(to_save)
+                except Exception as e:
+                    print(f"Error in worker thread: {e}")
+
+    print("Folders found: " + str(folders_to_save))
+    # Save folders to dictionary
+    while folders_to_save:
+        batch = []
+        while folders_to_save and (len(batch) < max_threads):
+            batch.append(folders_to_save.pop())
+
+        with ThreadPoolExecutor(max_workers=max_threads) as executor:
+            futures = [
+                executor.submit(save_folder, f, current_path)
+                for current_path in batch
+            ]
+
+            for future in as_completed(futures):
+                try:
+                    new_data = future.result()
+                    if new_data:
+                        data.update(new_data)
+                except Exception as e:
+                    print(f"Error in worker thread: {e}")
+    
+    print("Data keys: " + str(data.keys()))
     output_path = file_path.replace(".h5", "_mito.h5")
-    export_data(output_path, data)
-    print(f"Finished transforming h5 {output_path}")
+    if data:
+        export_data(output_path, data)
+    else:
+        print("No data found")
+
+def create_test_h5_structure(filename="test_file.h5"):
+    """
+    IA created function
+
+    Creates an HDF5 file with the following structure:
+
+    test_file.h5
+    └── recon-1
+        ├── em
+        │   └── fibsem-uint8
+        │       └── s2  → dataset
+        └── labels
+            └── groundtruth
+                ├── crop001
+                │   ├── mito
+                │   │   └── s2  → dataset
+                │   ├── nuc
+                │   └── mem
+                ├── crop002
+                └── crop003
+    """
+
+    # Sample label classes and crops
+    label_classes = ["mito", "nuc", "mem"]
+    crop_names = ["crop001", "crop002", "crop003"]
+
+    # Create the file
+    with h5py.File(filename, "w") as f:
+        # Create EM sample data
+        em_path = "recon-1/em/fibsem-uint8/s2"
+        f.create_dataset(em_path, data=np.random.randint(0, 255, (64, 64), dtype=np.uint8))
+
+        # Create label data under groundtruth
+        for crop in crop_names:
+            for label in label_classes:
+                label_path = f"recon-1/labels/groundtruth/{crop}/{label}/s2"
+                f.create_dataset(label_path, data=np.random.randint(0, 2, (64, 64), dtype=np.uint8))
+
+    print(f"Created mock HDF5 structure at: {filename}")
 
 if __name__ == "__main__":
     print("[zarr_utils.py]")
     path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/datasets/jrc_hela-2.h5"
-    get_only_mito(path)
+    test_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/datasets/test.h5"
+    # create_test_h5_structure(test_path)
+    get_only_mito(test_path)
     # zarr_to_h5(path, delete=False)
+
+    # # !!!
+    # f = h5py.File(test_path, "r")
+    # print(list(f["recon-1/labels/groundtruth/"].keys()))
