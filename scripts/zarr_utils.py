@@ -255,10 +255,18 @@ def create_test_h5_structure(filename="test_file.h5"):
 
 if __name__ == "__main__":
     print("[zarr_utils.py]")
-    path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/datasets/jrc_hela-2.h5"
+    names = [
+        "jrc_hela-2",             # 70 GB   # 12 GB after only 8nm # 36GB in h5??
+        "jrc_macrophage-2",       # 96 GB   # 15 GB     # 39GB
+        "jrc_jurkat-1",           # 123 GB  # 20 GB     # 44GB
+        "jrc_hela-3",             # 133 GB  # 18 GB     # 32GB
+        "jrc_ctl-id8-1",          # 235 GB  # ?         # 86GB
+    ]
+    path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/datasets/"
     test_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/datasets/test.h5"
     # create_test_h5_structure(test_path)
-    get_only_mito(test_path)
+    for name in names:
+        get_only_mito(path + name + ".h5")
     # zarr_to_h5(path, delete=False)
 
     # # !!!

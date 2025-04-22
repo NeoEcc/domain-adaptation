@@ -3,8 +3,10 @@ import time
 import os
 import quilt3 as q3
 import json
+import h5py
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from zarr_utils import zarr_to_h5
+
 
 # Tried from https://hdmf-zarr.readthedocs.io/en/dev/tutorials/plot_convert_nwb_hdf5.html
 
@@ -365,17 +367,79 @@ def get_all(names, bucket, folder):
                 print(f"Failed to convert {name}: {str(e)}.")
     print(f"Downloaded {n_downloaded} files")
 
+def read_attributes_h5(folder_path, print_path = None):
+    """
+    Reads the content of all files in the path and prints the voxel size and name in a json file as 
+    ```
+    name: foo,
+    voxel_size: [z, y, x],
+    translation: [z, y, x],
+    ```
+    Takes as input the path to the folder where the files are stored.
+    """
+    jsons = []
+    sizes = []
+    for file in os.listdir(folder_path):
+        try:
+            with h5py.File(f"{folder_path}{file}", "r") as f:
+                size = list(f.attrs.items())[3][1]
+                json_data = {
+                    'name': file,
+                    'voxel_size': str(size),
+                    'translation': str(list(f.attrs.items())[4][1])
+                }
+                # Count how many instances of each size 
+                found = False
+                for i, (s, c) in enumerate(sizes):
+                    if (s == size).all():
+                        sizes[i] = (s, c + 1)
+                        found = True
+                if not found:
+                    sizes.append((size, 1))
+            jsons.append(json_data)
+        except Exception as e:
+            print(f"Failed to read {file}: {str(e)}")
+            continue
+    print(sizes)
+    if print_path is not None:
+        try:
+            with open(print_path, 'w') as outfile:
+                json.dump(jsons, outfile)
+        except:
+            print("Failed to write file")
+
+
 # Tests
 if __name__ == "__main__":
     print("[utils.py]")
-    bucket = "s3://janelia-cosem-datasets"
-    bucket = q3.Bucket(bucket)
+    folder_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/"
+    print_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/txt/data.json'
+    other_path = '/scratch-grete/projects/nim00007/data/cellmap/data_crops/'
+    read_attributes_h5(other_path)
+
+    # bucket = "s3://janelia-cosem-datasets"
+    # bucket = q3.Bucket(bucket)
 
     # name = "jrc_hela-21" # Tough example with a lot of folders, up to s4
-    name = "jrc_fly-larva-1" # Good example with super simple structure and s8 compression
+    # name = "jrc_fly-larva-1" # Good example with super simple structure and s8 compression
     # name = "jrc_hela-2" # Tough with ground truth and MANY folders, smallest with groundtruth
     
-    path = f"{name}/{name}.zarr/"
-    download_path = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/{name}.zarr"
-    h5_path = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/{name}.h5"
-    get_folder_parallel(bucket, path, download_path, "s5", 32, ["masks", "inference"])
+    # path = f"{name}/{name}.zarr/"
+    # download_path = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/{name}.zarr"
+    # h5_path = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/{name}.h5"
+    # get_folder_parallel(bucket, path, download_path, "s5", 32, ["masks", "inference"])
+
+# [
+#     (array([8., 8., 8.]), 111),
+#     (array([32., 32., 32.]), 36), 
+#     (array([5.24, 4.  , 4.  ]), 26),
+#     (array([2., 2., 2.]), 20),
+#     (array([3.44, 4.  , 4.  ]), 20),
+#     (array([3.24, 4.  , 4.  ]), 19), 
+#     (array([3.36, 4.  , 4.  ]), 18), 
+#     (array([4., 4., 4.]), 13), 
+#     (array([4.56, 4.  , 4.  ]), 12), 
+#     (array([16., 16., 16.]), 6),
+#     (array([3.48, 4.  , 4.  ]), 5),
+#     (array([64., 64., 64.]), 2),
+# ]
