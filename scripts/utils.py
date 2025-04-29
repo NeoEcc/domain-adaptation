@@ -4,8 +4,15 @@ import os
 import quilt3 as q3
 import json
 import h5py
+import torch.nn as nn
+import torch
+import numpy as np
+import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from zarr_utils import zarr_to_h5
+from zarr_utils import zarr_to_h5, export_data
+from skimage.measure import block_reduce
+from skimage.transform import resize
+
 
 
 # Tried from https://hdmf-zarr.readthedocs.io/en/dev/tutorials/plot_convert_nwb_hdf5.html
@@ -20,6 +27,7 @@ def get_best_size(voxel_size, target_size, tollerance = 0.4) -> int:
     If there is some tollerance, e.g. 0.25, it will return a compression of 1, equivalent to a voxel size of (7.8,7.8,7.8).
     """
     compression = 0
+    print(type(voxel_size))
     if voxel_size < 0.01:
         raise ValueError("Voxel size should be greater than 0.01") # To prevent loops
     while voxel_size < (target_size * (1.0 - tollerance)) and compression < 8:
@@ -372,6 +380,7 @@ def read_attributes_h5(folder_path, print_path = None):
     Reads the content of all files in the path and prints the voxel size and name in a json file as 
     ```
     name: foo,
+    resolution: [z, y, x]
     voxel_size: [z, y, x],
     translation: [z, y, x],
     ```
@@ -382,12 +391,17 @@ def read_attributes_h5(folder_path, print_path = None):
     for file in os.listdir(folder_path):
         try:
             with h5py.File(f"{folder_path}{file}", "r") as f:
+                # Get group size from /raw-crop
+                resolution = f['raw_crop'].shape
                 size = list(f.attrs.items())[3][1]
+
                 json_data = {
                     'name': file,
+                    'resolution': str(resolution),
                     'voxel_size': str(size),
                     'translation': str(list(f.attrs.items())[4][1])
                 }
+                print(json_data)
                 # Count how many instances of each size 
                 found = False
                 for i, (s, c) in enumerate(sizes):
@@ -400,6 +414,7 @@ def read_attributes_h5(folder_path, print_path = None):
         except Exception as e:
             print(f"Failed to read {file}: {str(e)}")
             continue
+    print("SIZES: ")
     print(sizes)
     if print_path is not None:
         try:
@@ -407,15 +422,83 @@ def read_attributes_h5(folder_path, print_path = None):
                 json.dump(jsons, outfile)
         except:
             print("Failed to write file")
+    else:
+        print("SHAPES:")
+        print(jsons)
 
+def downsample_to_target(path_to_file, target_size = 8):
+    """
+    Downsamples the dataset in path to the target size.
+    """
+    # Copy file to preserve metadata # cannot do it anymore, apparently clears metadata
+    with h5py.File(path_to_file, "w") as f:
+        # Get downscaling: if -1, upsample. If over 16, do nothing
+        print(list(f.attrs.keys()))
+        voxel_size = f.attrs["scale"][1]
+        
+        if voxel_size <= target_size: 
+            downscaling = get_best_size(voxel_size, target_size)
+        elif voxel_size > target_size and voxel_size <= 2*target_size:
+            downscaling = -1
+        else:
+            downscaling = -100
+        print("Voxel size: " + str(voxel_size) + ". Downscaling: " + str(downscaling))
+        # Iterate over the datasets
+        def process_dataset(name, obj):
+            if isinstance(obj, h5py.Dataset):
+                data = obj[()]
+                print("Downscaling " + name)
+                if(downscaling > 0):
+                    filter_size = 2 ** downscaling
+                    obj[()] = block_reduce(data, (filter_size, filter_size, filter_size), np.mean)
+                elif downscaling == 0:
+                    print("No downscaling needed")
+                elif downscaling == -1:
+                    obj[()] = resize(data, (data.shape[0]*2, data.shape[1]*2, data.shape[2]*2), mode='reflect', anti_aliasing=True)
+                    print("Big sample upscaled")
+                else:
+                    print("Downscaling not possible. Voxel size: "  + str(voxel_size))
+        f.visititems(process_dataset)
+        # Update the attributes
+        if downscaling >= 0:
+            f.attrs['scale'] = (x*(2 ** downscaling) for x in f.attrs['scale'])
+        elif downscaling == -1:
+            f.attrs['scale'] = (x/2 for x in f.attrs['scale'])
+    
+def visualize_some(dataset, number = 4):
+    """
+    visualize the first `number x number x number` elements of the dataset in a matrix shape
+    """ 
+    for i in range(number):
+        for j in range(number):
+            elements = []
+            for k in range(number):
+                # Get the element at (i, j, k)
+                elements.append(dataset[i, j, k])
+            print(elements)
+        print("")
+        print("")
 
 # Tests
 if __name__ == "__main__":
     print("[utils.py]")
-    folder_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/"
-    print_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/txt/data.json'
-    other_path = '/scratch-grete/projects/nim00007/data/cellmap/data_crops/'
-    read_attributes_h5(other_path)
+    print_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/txt/'
+    originals_path = '/scratch-grete/projects/nim00007/data/cellmap/data_crops/'
+    test_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/'
+    name = 'crop_1'
+    # shutil.copyfile(originals_path+ "crop_1.h5", test_path + "crop_1.h5")
+
+    with h5py.File(test_path + name + ".h5", "r") as f:
+        print(f.attrs["em_level"])
+        print(f.attrs["scale"])
+        print(f.attrs["gt_level"])
+        print(f.attrs["translation"])
+
+    # for file in os.listdir(test_path + "resized/"):
+    #     print("Doing stuff to ", file)
+    #     downsample_to_target(f"{test_path}resized/{file}", 8)
+
+
 
     # bucket = "s3://janelia-cosem-datasets"
     # bucket = q3.Bucket(bucket)
@@ -428,18 +511,3 @@ if __name__ == "__main__":
     # download_path = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/{name}.zarr"
     # h5_path = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/{name}.h5"
     # get_folder_parallel(bucket, path, download_path, "s5", 32, ["masks", "inference"])
-
-# [
-#     (array([8., 8., 8.]), 111),
-#     (array([32., 32., 32.]), 36), 
-#     (array([5.24, 4.  , 4.  ]), 26),
-#     (array([2., 2., 2.]), 20),
-#     (array([3.44, 4.  , 4.  ]), 20),
-#     (array([3.24, 4.  , 4.  ]), 19), 
-#     (array([3.36, 4.  , 4.  ]), 18), 
-#     (array([4., 4., 4.]), 13), 
-#     (array([4.56, 4.  , 4.  ]), 12), 
-#     (array([16., 16., 16.]), 6),
-#     (array([3.48, 4.  , 4.  ]), 5),
-#     (array([64., 64., 64.]), 2),
-# ]

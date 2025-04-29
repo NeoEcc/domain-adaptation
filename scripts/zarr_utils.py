@@ -268,7 +268,3 @@ if __name__ == "__main__":
     for name in names:
         get_only_mito(path + name + ".h5")
     # zarr_to_h5(path, delete=False)
-
-    # # !!!
-    # f = h5py.File(test_path, "r")
-    # print(list(f["recon-1/labels/groundtruth/"].keys()))

@@ -9,6 +9,8 @@ import os
 import imageio.v3 as imageio
 from matplotlib import colors
 import matplotlib.pyplot as plt
+from torch_em.transform.label import labels_to_binary, BoundaryTransform
+
 
 
 
@@ -25,32 +27,50 @@ from model_utils import *
 
 # Adapt  torch-em/torch em/data/datasets/electron microscopy/cellmap.py
 BATCH_SIZE = 4
-DATA_DIR = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/datasets/"
-NAMES = [
-        "jrc_hela-2",             # 70 GB   # 12 GB     # 36GB in h5??
-        "jrc_macrophage-2",       # 96 GB   # 15 GB     # 39GB
-        "jrc_jurkat-1",           # 123 GB  # 20 GB     # 44GB
-        "jrc_hela-3",             # 133 GB  # 18 GB     # 
-        "jrc_ctl-id8-1",          # 235 GB  # ?         # 86G
-    ]
+DATA_DIR = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/"
 
-# Instantiate model: 3d, b&w, 54 classes so 1->1? 
-model = UNet3d(1,1)
-# print(model)
+# Instantiate model: 3d, b&w, 54 classes mapped to one mask and one boundary
+model = UNet3d(1,2)
+ex_names = [
+    "crop_1.h5",
+    "crop_3.h5",
+    "crop_4.h5",
+    "crop_6.h5",
+    "crop_7.h5",
+    "crop_8.h5",
+    "crop_9.h5",
+    "crop_100.h5"
+]
 
-paths = f"{DATA_DIR}jrc_hela-2.h5"
-print("[PATHS] " + paths)
-key = "recon-1/"
+ex_paths = [
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/crop_1.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/crop_3.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/crop_4.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/crop_6.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/crop_7.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/crop_8.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/crop_9.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/crop_100.h5",
+]
 # Create dataset
-dataset = SegmentationDataset(
-    raw_path = paths,
-    raw_key = "/recon-1/em/fibsem-uint8/s1", # get to s_
-    patch_shape = (200,200,200), # Replace with real shape
-    label_path = paths,
-    label_key = "/recon-1/labels/groundtruth/crop96/perox_mem/s1",    # Get to dataset
-    ndim=3
+dataset = default_segmentation_dataset( # SegmentationDataset
+    raw_paths = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/crop_1.h5", #ex_paths,
+    raw_key = "raw_crop", 
+    patch_shape = (100, 500, 500), 
+    label_paths = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/crop_1.h5",
+    label_key = "label_crop/mito",   
+    ndim=3,
+    label_transform=BoundaryTransform()
 )
-print(dataset)
+file_path = ex_paths[0]
+f = h5py.File(f"{file_path}/raw_crop", "r")
+print(f)
+# Get statistics about all shapes, figure out the padding soluion 
+# Get screw tighter
+# print(dataset)
 
-dataloader = get_data_loader(dataset, BATCH_SIZE, )
-# Get dataloader
+dataloader = get_data_loader(dataset, BATCH_SIZE)
+# print(dataloader)
+
+# Trainer:
+# torch-em
