@@ -31,6 +31,7 @@ DATA_DIR = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops
 
 # Instantiate model: 3d, b&w, 54 classes mapped to one mask and one boundary
 model = UNet3d(1,2)
+# examples to work with a few crops
 ex_names = [
     "crop_1.h5",
     "crop_3.h5",
@@ -52,6 +53,9 @@ ex_paths = [
     "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/crop_9.h5",
     "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/crop_100.h5",
 ]
+
+names = os.listdir(DATA_DIR)
+        
 # Create dataset
 dataset = default_segmentation_dataset( # SegmentationDataset
     raw_paths = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/crop_1.h5", #ex_paths,

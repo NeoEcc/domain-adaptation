@@ -27,7 +27,6 @@ def get_best_size(voxel_size, target_size, tollerance = 0.4) -> int:
     If there is some tollerance, e.g. 0.25, it will return a compression of 1, equivalent to a voxel size of (7.8,7.8,7.8).
     """
     compression = 0
-    print(type(voxel_size))
     if voxel_size < 0.01:
         raise ValueError("Voxel size should be greater than 0.01") # To prevent loops
     while voxel_size < (target_size * (1.0 - tollerance)) and compression < 8:
@@ -426,45 +425,76 @@ def read_attributes_h5(folder_path, print_path = None):
         print("SHAPES:")
         print(jsons)
 
-def downsample_to_target(path_to_file, target_size = 8):
+def downsample_to_target(path_to_source, path_to_file, target_size = 8):
     """
     Downsamples the dataset in path to the target size.
+
+    Args:
+        path_to_source (str): Path to the source file
+        path_to_file (str): Path to the destination file
+        target_size (int): Target size in nm between voxels
     """
     # Copy file to preserve metadata # cannot do it anymore, apparently clears metadata
-    with h5py.File(path_to_file, "w") as f:
-        # Get downscaling: if -1, upsample. If over 16, do nothing
-        print(list(f.attrs.keys()))
-        voxel_size = f.attrs["scale"][1]
+    try:
+        shutil.copyfile(path_to_source, path_to_file)
+
+        with h5py.File(path_to_file, "r+") as f:
         
-        if voxel_size <= target_size: 
-            downscaling = get_best_size(voxel_size, target_size)
-        elif voxel_size > target_size and voxel_size <= 2*target_size:
-            downscaling = -1
-        else:
-            downscaling = -100
-        print("Voxel size: " + str(voxel_size) + ". Downscaling: " + str(downscaling))
-        # Iterate over the datasets
-        def process_dataset(name, obj):
-            if isinstance(obj, h5py.Dataset):
-                data = obj[()]
-                print("Downscaling " + name)
-                if(downscaling > 0):
-                    filter_size = 2 ** downscaling
-                    obj[()] = block_reduce(data, (filter_size, filter_size, filter_size), np.mean)
-                elif downscaling == 0:
-                    print("No downscaling needed")
-                elif downscaling == -1:
-                    obj[()] = resize(data, (data.shape[0]*2, data.shape[1]*2, data.shape[2]*2), mode='reflect', anti_aliasing=True)
-                    print("Big sample upscaled")
-                else:
-                    print("Downscaling not possible. Voxel size: "  + str(voxel_size))
-        f.visititems(process_dataset)
-        # Update the attributes
-        if downscaling >= 0:
-            f.attrs['scale'] = (x*(2 ** downscaling) for x in f.attrs['scale'])
-        elif downscaling == -1:
-            f.attrs['scale'] = (x/2 for x in f.attrs['scale'])
-    
+            # Get downscaling: if -1, upsample. If over 16, do nothing
+            # print(list(f.attrs.keys()))
+            voxel_size = f.attrs["scale"][1]
+            if voxel_size == target_size:
+                print("Voxel size is already correct for " + path_to_file)
+                downscaling = 0
+                return
+            elif voxel_size < target_size: 
+                downscaling = get_best_size(voxel_size, target_size)
+            elif voxel_size > target_size and voxel_size <= 2*target_size:
+                print("Voxel size currently not supported: " + str(voxel_size) + " for " + path_to_file)
+                downscaling = -1
+                os.remove(path_to_file)  # Remove the file if upscaling is not possible
+                # Issue explained later
+                return
+            else:
+                print("Voxel size currently not supported: " + str(voxel_size) + " for " + path_to_file)
+                os.remove(path_to_file)
+                downscaling = -100
+                return
+            print("Voxel size: " + str(voxel_size) + ". Downscaling: " + str(downscaling))
+            # Iterate over the datasets
+            def process_dataset(name, obj):
+                if isinstance(obj, h5py.Dataset):
+                    data = obj[()]
+                    if(downscaling > 0):
+                        # print("Downscaling " + name)
+                        filter_size = 2 ** downscaling
+                        downsampled_data = block_reduce(data, (filter_size, filter_size, filter_size), np.mean)
+                        obj.resize(downsampled_data.shape)  # Resize the dataset to match the downsampled data
+                        obj[...] = downsampled_data
+                    elif downscaling == 0:
+                        print("No downscaling needed")
+                    elif downscaling == -1:
+                        print("Cannot upscale for now")
+                        # This should upsample the data, but hdf5 has got a limitation.
+                        # The maximum size is defined at data creation and cannot be changed.
+                        # Would have to create a new file to make it work, not worth it for 6 elements. Might make a function for that later 
+                        # upsampled = resize(data, (data.shape[0]*2, data.shape[1]*2, data.shape[2]*2), mode='reflect', anti_aliasing=True)
+                        # obj.resize(upsampled.shape)  # Resize the dataset to match the upsampled data
+                        # obj[...] = upsampled
+                        # print("Upscaling " + name)
+                    else:
+                        print("Downscaling not possible. Voxel size: "  + str(voxel_size))
+            f.visititems(process_dataset)
+            # Update the attributes
+            if downscaling >= 0:
+                f.attrs['scale'] = [x * (2 ** downscaling) for x in f.attrs['scale']]
+            elif downscaling == -1:
+                f.attrs['scale'] = (x/2 for x in f.attrs['scale'])
+            print("Done downsampling " + path_to_file)
+    except Exception as e:
+        print(f"Failed to downsample {path_to_file}: {str(e)}")
+            
+
 def visualize_some(dataset, number = 4):
     """
     visualize the first `number x number x number` elements of the dataset in a matrix shape
@@ -479,35 +509,21 @@ def visualize_some(dataset, number = 4):
         print("")
         print("")
 
-# Tests
+# Testsu
 if __name__ == "__main__":
-    print("[utils.py]")
     print_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/txt/'
     originals_path = '/scratch-grete/projects/nim00007/data/cellmap/data_crops/'
-    test_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/'
+    dest_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/'
     name = 'crop_1'
-    # shutil.copyfile(originals_path+ "crop_1.h5", test_path + "crop_1.h5")
-
-    with h5py.File(test_path + name + ".h5", "r") as f:
-        print(f.attrs["em_level"])
-        print(f.attrs["scale"])
-        print(f.attrs["gt_level"])
-        print(f.attrs["translation"])
-
-    # for file in os.listdir(test_path + "resized/"):
-    #     print("Doing stuff to ", file)
-    #     downsample_to_target(f"{test_path}resized/{file}", 8)
-
-
-
-    # bucket = "s3://janelia-cosem-datasets"
-    # bucket = q3.Bucket(bucket)
-
-    # name = "jrc_hela-21" # Tough example with a lot of folders, up to s4
-    # name = "jrc_fly-larva-1" # Good example with super simple structure and s8 compression
-    # name = "jrc_hela-2" # Tough with ground truth and MANY folders, smallest with groundtruth
     
-    # path = f"{name}/{name}.zarr/"
-    # download_path = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/{name}.zarr"
-    # h5_path = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/{name}.h5"
-    # get_folder_parallel(bucket, path, download_path, "s5", 32, ["masks", "inference"])
+    # On the fly parallelization
+    def process_file(file):
+        print("Doing stuff to ", file)
+        downsample_to_target(f"{originals_path}{file}", f"{dest_path}{file}", 8)
+
+    with ThreadPoolExecutor() as executor:
+        futures = [executor.submit(process_file, file) for file in os.listdir(originals_path)]
+        for future in as_completed(futures):
+            future.result()
+
+# Called at 11:18
