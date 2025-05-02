@@ -2,6 +2,6 @@ files/*
 !files/README.md
 scripts/__pycache__
 txt
-torch-em
 .vscode
+logs
 torch-em

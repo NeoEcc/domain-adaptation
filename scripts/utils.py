@@ -493,6 +493,9 @@ def downsample_to_target(path_to_source, path_to_file, target_size = 8):
             print("Done downsampling " + path_to_file)
     except Exception as e:
         print(f"Failed to downsample {path_to_file}: {str(e)}")
+        # Delete file if it was created
+        if os.path.exists(path_to_file):
+            os.remove(path_to_file)
             
 
 def visualize_some(dataset, number = 4):
@@ -509,6 +512,29 @@ def visualize_some(dataset, number = 4):
         print("")
         print("")
 
+def file_check(path_to_file):
+    """
+    Simply verifies that a file can be opened, gets an attribute and opens a dataset.
+    """
+    try:
+        with h5py.File(path_to_file) as f:
+            # Check attrs
+            if(f.attrs is not None):
+                print(os.path.basename(path_to_file), ": ok, ", str(f.attrs["scale"]))
+            else:
+                print(os.path.basename(path_to_file), ": failed to get attributes")
+            # Check dataset
+            try:
+                print("First element of dataset: " + str(f["raw_crop"][0][0][0]))
+            except Exception as e:
+                print(os.path.basename(path_to_file), ": failed to open dataset + ", e)
+            # Check labels
+            try:
+                print("First element of labels: " + str(f["label_crop/mito"][0][0][0]))
+            except Exception as e:
+                print(os.path.basename(path_to_file), ": failed to open dataset + ", e)
+    except Exception as e:
+        print(os.path.basename(path_to_file), ": failed to open + ", e)
 # Testsu
 if __name__ == "__main__":
     print_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/txt/'
@@ -516,14 +542,19 @@ if __name__ == "__main__":
     dest_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/'
     name = 'crop_1'
     
-    # On the fly parallelization
-    def process_file(file):
-        print("Doing stuff to ", file)
-        downsample_to_target(f"{originals_path}{file}", f"{dest_path}{file}", 8)
+    for file in os.listdir(dest_path):
+        file_check(f"{dest_path}{file}")
 
-    with ThreadPoolExecutor() as executor:
-        futures = [executor.submit(process_file, file) for file in os.listdir(originals_path)]
-        for future in as_completed(futures):
-            future.result()
+    # start = time.time()
+    # # On the fly parallelization
+    # def process_file(file):
+    #     print("Doing stuff to ", file)
+    #     downsample_to_target(f"{originals_path}{file}", f"{dest_path}{file}", 8)
 
-# Called at 11:18
+    # with ThreadPoolExecutor() as executor:
+    #     futures = [executor.submit(process_file, file) for file in os.listdir(originals_path)]
+    #     for future in as_completed(futures):
+    #         future.result()
+    # end = time.time()
+    # print("Getting files took " + str((end-start)) + "s.")
+
