@@ -7,11 +7,6 @@ from torch_em.model import AnisotropicUNet
 from torch_em.util.debug import check_loader, check_trainer
 from sklearn.model_selection import train_test_split
 
-#
-# CODE FROM 3D-UNet-Training.ipynb
-# https://github.com/constantinpape/torch-em/blob/main/experiments/3D-UNet-Training.ipynb
-#
-
 # Prepare data
 
 all_paths_raw = os.listdir( "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/")
@@ -51,7 +46,8 @@ check_data(val_data_paths, val_label_paths, val_rois)
 
 assert len(patch_shape) == 3
 
-# What to do
+# Network output
+
 # Whether to add a foreground channel (1 for all labels that are not zero) to the target.
 foreground = True
 # Whether to add affinity channels (= directed boundaries) or a boundary channel to the target.
@@ -77,6 +73,7 @@ elif boundaries:
 elif foreground:
     label_transform = torch_em.transform.label.labels_to_binary
 
+# Loss, metric, batch
 batch_size = 1
 loss = "dice"
 metric = "dice"
@@ -169,16 +166,6 @@ trainer = torch_em.default_segmentation_trainer(
     log_image_interval=50,
     # logger=None
 )
-print(type(experiment_name))
-
-print("OK")
-# Debugging: Print the types of variables that could be None
-print("Type of trainer:", type(trainer))
-print("Type of train_loader:", type(train_loader))
-print("Type of val_loader:", type(val_loader))
-print("Type of model:", type(model))
-print("Type of loss_function:", type(loss_function))
-print("Type of metric_function:", type(metric_function))
 
 trainer.fit(n_iterations)
 

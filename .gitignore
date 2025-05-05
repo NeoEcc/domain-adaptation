@@ -5,3 +5,4 @@ txt
 .vscode
 logs
 torch-em
+model/checkpoints
