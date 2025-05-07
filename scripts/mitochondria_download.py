@@ -1,18 +1,16 @@
 # COPILOT
-from utils import get_some
+from utils import get_filtered_from_bucket
 
 if __name__ == "__main__":
-    print("[mitochondria_download.py]")
     names = [
-        # "jrc_hela-1",             # 31 GB
-        # "jrc_hela-2",             # 70 GB     # Smallest with groundtruth
-        # "jrc_hela-21",            # 9.8 GB
-        # "jrc_hela-22",            # 16 GB
-        # "jrc_hela-3",             # 133 GB
-        
-        # "jrc_hela-bfa",           # 14 GB
-        # "jrc_hela-h89-1",         # 44 GB
-        # "jrc_hela-h89-2",         # 57 GB
+        "jrc_hela-1",             # 31 GB
+        "jrc_hela-2",             # 70 GB    
+        "jrc_hela-21",            # 9.8 GB
+        "jrc_hela-22",            # 16 GB
+        "jrc_hela-3",             # 133 GB
+        "jrc_hela-bfa",           # 14 GB
+        "jrc_hela-h89-1",         # 44 GB
+        "jrc_hela-h89-2",         # 57 GB
         "jrc_mus-kidney",
         "jrc_mus-pancreas-1",
         "jrc_mus-pancreas-2",
@@ -26,7 +24,7 @@ if __name__ == "__main__":
         "jrc_ctl-id8-2",        # 28.2 GB
         "jrc_ctl-id8-3",        # 39.2 GB
         "jrc_ctl-id8-4",        # 32.7 GB
-        "jrc_ctl-id8-5",        # 18.3GB # Forgot comma, fused together and failed to fetch 
+        "jrc_ctl-id8-5",        # 18.3GB 
         "jrc_dauer-larva",      # 315 GB
         "jrc_fly-larva-1",      # 9.72 TB
         "jrc_fly-acc-calyx-1",  # 4.81 TB
@@ -57,7 +55,7 @@ if __name__ == "__main__":
         "jrc_hela-bfa",           # 14 GB
         "jrc_hela-2",             # 70 GB
         "jrc_macrophage-2",       # 96 GB
-        "jrc_cos7-11",           # 90.6 GB
+        "jrc_cos7-11",            # 90.6 GB
         "jrc_jurkat-1",           # 123 GB
         "jrc_hela-3",             # 133 GB
         "jrc_ctl-id8-1",          # 235 GB
@@ -75,17 +73,17 @@ if __name__ == "__main__":
     ]
 
     names_with_labels = [
-        # "jrc_hela-2",             # 70 GB   # 12 GB after only 8nm # 36GB in h5??
-        # "jrc_macrophage-2",       # 96 GB   # 15 GB     # 39GB
-        # "jrc_jurkat-1",           # 123 GB  # 20 GB     # 44GB
-        # "jrc_hela-3",             # 133 GB  # 18 GB     # 
-        # "jrc_ctl-id8-1",          # 235 GB  # ?         # 86G
-        # "jrc_mus-kidney"          # unknown # 
-        "jrc_mus-liver",          # 1.12 TB # Too big
-        # "jrc_sum159-1",           # 13.9 TB
+        "jrc_hela-2",             # 70 GB  
+        "jrc_macrophage-2",       # 96 GB   
+        "jrc_jurkat-1",           # 123 GB  
+        "jrc_hela-3",             # 133 GB  
+        "jrc_ctl-id8-1",          # 235 GB  
+        "jrc_mus-kidney"          # unknown 
+        "jrc_mus-liver",          # 1.12 TB 
+        "jrc_sum159-1",           # 13.9 TB
     ]
 
     bucket_str = "s3://janelia-cosem-datasets"
     folder_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/"
 
-    get_some(names_with_labels, folder_path, bucket_str, max_threads=64)
+    get_filtered_from_bucket(names_with_labels, folder_path, bucket_str, max_threads=64)

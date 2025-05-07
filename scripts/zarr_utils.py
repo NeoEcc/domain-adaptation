@@ -206,7 +206,7 @@ def get_only_mito(file_path, names=["mito", "fibsem-uint8"], max_threads=None, f
                 except Exception as e:
                     print(f"Error in worker thread: {e}")
     
-    print("Data keys: " + str(data.keys()))
+    # print("Data keys: " + str(data.keys()))
     output_path = file_path.replace(".h5", "_mito.h5")
     if data:
         export_data(output_path, data)
@@ -254,7 +254,6 @@ def create_test_h5_structure(filename="test_file.h5"):
     print(f"Created mock HDF5 structure at: {filename}")
 
 if __name__ == "__main__":
-    print("[zarr_utils.py]")
     names = [
         "jrc_hela-2",             # 70 GB   # 12 GB after only 8nm # 36GB in h5??
         "jrc_macrophage-2",       # 96 GB   # 15 GB     # 39GB

@@ -185,38 +185,3 @@ doc = None
 # This is a fancy model to segment shiny objects in images.
 # """
 
-import torch_em.util.modelzoo
-
-for_dij = additional_weight_formats is not None and "torchscript" in additional_weight_formats
-
-training_data = None
-
-pred_str = ""
-if affinities:
-    pred_str = "affinities and foreground probabilities" if foreground else "affinities"
-elif boundaries:
-    pred_str = "boundary and foreground probabilities" if foreground else "boundaries"
-elif foreground:
-    pred_str = "foreground"
-
-default_doc = f"""#{experiment_name}
-
-This model was trained with [the torch_em 3d UNet notebook](https://github.com/constantinpape/torch-em/blob/main/experiments/3D-UNet-Training.ipynb).
-"""
-if pred_str:
-    default_doc += f"It predicts {pred_str}.\n"
-
-training_summary = torch_em.util.get_training_summary(trainer, to_md=True, lr=learning_rate)
-default_doc += f"""## Training Schedule
-
-{training_summary}
-"""
-
-if doc is None:
-    doc = default_doc
-
-torch_em.util.modelzoo.export_bioimageio_model(
-    trainer, export_folder, input_optional_parameters=True,
-    for_deepimagej=for_dij, training_data=training_data, documentation=doc
-)
-torch_em.util.modelzoo.add_weight_formats(export_folder, additional_weight_formats)
