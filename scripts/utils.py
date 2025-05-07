@@ -1,4 +1,3 @@
-# COPILOT
 import time
 import os
 import quilt3 as q3
@@ -423,8 +422,8 @@ def read_attributes_h5(folder_path, print_path = None):
         except Exception as e:
             print(f"Failed to read {file}: {str(e)}")
             continue
-    print("SIZES: ")
-    print(sizes)
+    # print("SIZES: ")
+    # print(sizes)
     if print_path is not None:
         try:
             with open(print_path, 'w') as outfile:
@@ -646,8 +645,8 @@ if __name__ == "__main__":
         if file not in blacklist: 
             resize_to_target(f"{originals_path}{file}", f"{dest_path}{file}", 8)
 
-    with ThreadPoolExecutor() as executor:
-        futures = [executor.submit(process_file, file) for _, file in zip(range(20), os.listdir(originals_path))] # Temp limit to 20
+    with ThreadPoolExecutor(max_workers = 96) as executor:
+        futures = [executor.submit(process_file, file) for file in os.listdir(originals_path)] # Temp limit to 20 with _, ... zip(range(20), os.listdir(originals_path))
         for future in as_completed(futures):
             future.result()
     end = time.time()

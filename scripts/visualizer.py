@@ -1,4 +1,5 @@
-# import time
+# From synapse-net
+
 from typing import Any, Dict
 # from config import *
 import h5py

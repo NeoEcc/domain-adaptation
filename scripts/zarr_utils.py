@@ -8,7 +8,7 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
-# Most functions not made by me
+# Some functions taken from
 # https://github.com/lufre1/synapse/blob/main/synapse/io/util.py
 
 def read_data(path):
@@ -148,10 +148,11 @@ def save_folder(f, current_path):
             data = data | save_folder(f, current_path + item + "/", data)
     return data
 
-def get_only_mito(file_path, names=["mito", "fibsem-uint8"], max_threads=None, folders_to_ignore=[]):
+def filter_h5_content(file_path, names=["mito", "fibsem-uint8"], max_threads=None, folders_to_ignore=[]):
     """
-    Takes an h5 file and returns the same file keeping only the correct mito folders in `path_to_groundtruth`, 
-    renaming the file from 'x.h5' to 'x_mito.h5'.
+    Takes an h5 file and produces a copy keeping only the specified folders contained in `names`, 
+    renaming the file from 'x.h5' to 'x_mito.h5'. Planned to work in a nonstandard file structure, 
+    as in this example for the OpenOrganelle dataset:
 
     - Sample: "/recon-1/em/fibsem-uint8/s_"
     - Ground truth: "/recon-1/labels/groundtruth/crop___/mito/s_"
@@ -213,45 +214,6 @@ def get_only_mito(file_path, names=["mito", "fibsem-uint8"], max_threads=None, f
     else:
         print("No data found")
 
-def create_test_h5_structure(filename="test_file.h5"):
-    """
-    IA created function
-
-    Creates an HDF5 file with the following structure:
-
-    test_file.h5
-    └── recon-1
-        ├── em
-        │   └── fibsem-uint8
-        │       └── s2  → dataset
-        └── labels
-            └── groundtruth
-                ├── crop001
-                │   ├── mito
-                │   │   └── s2  → dataset
-                │   ├── nuc
-                │   └── mem
-                ├── crop002
-                └── crop003
-    """
-
-    # Sample label classes and crops
-    label_classes = ["mito", "nuc", "mem"]
-    crop_names = ["crop001", "crop002", "crop003"]
-
-    # Create the file
-    with h5py.File(filename, "w") as f:
-        # Create EM sample data
-        em_path = "recon-1/em/fibsem-uint8/s2"
-        f.create_dataset(em_path, data=np.random.randint(0, 255, (64, 64), dtype=np.uint8))
-
-        # Create label data under groundtruth
-        for crop in crop_names:
-            for label in label_classes:
-                label_path = f"recon-1/labels/groundtruth/{crop}/{label}/s2"
-                f.create_dataset(label_path, data=np.random.randint(0, 2, (64, 64), dtype=np.uint8))
-
-    print(f"Created mock HDF5 structure at: {filename}")
 
 if __name__ == "__main__":
     names = [
@@ -263,7 +225,7 @@ if __name__ == "__main__":
     ]
     path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/datasets/"
     test_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/datasets/test.h5"
-    # create_test_h5_structure(test_path)
+
     for name in names:
-        get_only_mito(path + name + ".h5")
+        filter_h5_content(path + name + ".h5")
     # zarr_to_h5(path, delete=False)

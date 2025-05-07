@@ -1,22 +1,30 @@
 ## Content
-This folder contains the files required to train the model, and in the `/zattr` folder the .zattr files.
-These files are taken from the OpenOrganelle dataset; only mithocondria files are downloaded. This can be found on the [janelia research group site](https://openorganelle.janelia.org/organelles/mito). 
+This folder contains the files required to train the model in `/crops` (produced by defauly by `scripts/resize_to_target`), as well as the useful information produced by severak utility functions in `/txt` 
+
+It can also contain the files downloaded from the the OpenOrganelle dataset; using `scripts/get_filtered_from_bucket` or `scripts/get_all`, only mithocondria files or all files are downloaded. 
+
+The whole dataset can be found on the [janelia research group site](https://openorganelle.janelia.org/organelles/mito). 
 
 ### Download
 The download is performed using the scripts found in scripts/mythocondria_download.py.
+
 `get_all` gets all items from a list. It downloads files and converts them to HDF5. 
 
-`get_some` only downloads the files with ground truth, or setting `inference = True`, also files with inference. What it does is:
-- Use the list of files;
-- Verify if the file has a ground truth (or inference); skip to next if it is missing;
-- Read from zattr file the voxel size: download the compression that gets it closer to the `target_size`, defaults to 8. 
-- Download the zarr file with a given compression;
-- Transform the zarr into h5
-Since the reading phase can take a long time, the list of all files found for download are stored in a txt file with the same name as the dataset, under `files/txt/{name}_to_download`.
+`get_some` only downloads the files with ground truth, or setting `inference = True`, also files with inference. For all files in the list, it checks if there is ground truth or inference; if yes, determines the right voxel size and downloads the file in the specified folder, then converts it to HDF5.
+Since the reading phase can take a long time, the list of all files found for download are stored in a txt file with the same name as the dataset, under `files/txt/{name}_to_download`. The path to this file can be passed as a parameter to the function to skip the reading process. 
 
 ### Statistics
-`utils.py` contains the scripts required to fetch the information about the ground truth and the inference data (whether they are available or not) and about the voxel size. The `.zattrs` files are downloaded in the `fles/zattrs` folder; there is also generated the `data.json` file, which stores for each file:
-`data.json` is the product of `read-zattrs`, which takes a list of `.zattrs` files downloaded by `get-zattrs` and collects the important metadata of the zarrs available for download.  
+`utils.py` contains the functions required to fetch information relevant for training, such as resolution and voxel size.
+
+`read_attributes_h5` reads the attributes of all HDF5 files in a given path, and prints the relevant statistics in a json file specified by the user as:
+```
+    name: foo,
+    resolution: [z, y, x]
+    voxel_size: [z, y, x],
+    translation: [z, y, x],
+```
+
+Similarly, `data.json` is the product of `read-zattrs`, which takes a list of `.zattrs` files downloaded by `get-zattrs` and collects the important metadata of the zarrs available for download.  
 
 ```
 {
@@ -26,7 +34,7 @@ Since the reading phase can take a long time, the list of all files found for do
     has_inference: False
 }
 ```
-And stores the number of datasets with inference, ground truth and both:
+It also stores the number of datasets with inference, ground truth and both:
 ```
 {
     "inference": x, 
