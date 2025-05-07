@@ -13,6 +13,24 @@ from sklearn.model_selection import train_test_split
 from skimage.transform import rescale
 
 
+def directory_to_path_list(directory) -> list:
+    """
+    Given the path to a certain directory, 
+    returns the list of paths to all the files it contains.
+
+    Args
+        directory (str): path to a folder containing files. 
+    """
+    # Input check: add a "/" if not there not to mess up later
+    if directory == "":
+        raise ValueError("Path cannot be empty")
+    if directory[-1] != "/":
+        directory += "/"
+    all_paths_raw = os.listdir(directory)
+    all_paths = []
+    for i in range(len(all_paths_raw)):
+        all_paths.append(f"{directory}{all_paths_raw[i]}")
+    return all_paths
 
 def get_dataloader(paths, data_key, label_key, split, patch_shape, batch_size = 1):
     """"

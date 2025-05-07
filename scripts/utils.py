@@ -501,9 +501,8 @@ def resize_to_target(path_to_source, path_to_file, target_size = 8):
         shutil.copyfile(path_to_source, path_to_file)
         file_name = os.path.basename(path_to_file)
         with h5py.File(path_to_file, "r+") as f:
-        
+            upsampled_path = None
             # Get downscaling: if -1, upsample. If over 32, do nothing
-            # print(list(f.attrs.keys()))
             voxel_size = f.attrs["scale"][1]
             if voxel_size == target_size:
                 print("Voxel size is already correct for " + file_name)
@@ -514,14 +513,15 @@ def resize_to_target(path_to_source, path_to_file, target_size = 8):
             elif voxel_size > target_size and voxel_size <= 2*target_size:
                 # print("Voxel size currently not supported: " + str(voxel_size) + " for " + path_to_file)
                 downscaling = -1
-            elif voxel_size > target_size and voxel_size <= 4* target_size:
-                downscaling = -2
+                upsampled_path = f"{os.path.splitext(path_to_file)[0]}_upsampled{os.path.splitext(path_to_file)[1]}"
+            # elif voxel_size > target_size and voxel_size <= 4* target_size:
+            #     downscaling = -2
+            #     upsampled_path = f"{os.path.splitext(path_to_file)[0]}_upsampled{os.path.splitext(path_to_file)[1]}"
             else:
                 print("Voxel size currently not supported: " + str(voxel_size) + " for " + file_name)
                 os.remove(path_to_file)
                 downscaling = None
                 return
-            # print("Voxel size: " + str(voxel_size) + ". Downscaling: " + str(downscaling) + " for " + file_name)
             # Iterate over the datasets
             items_dict = {}
             def process_dataset(name, obj):
@@ -529,26 +529,20 @@ def resize_to_target(path_to_source, path_to_file, target_size = 8):
                     data = obj[()]
                     # data = f[name]
                     if downscaling > 0:
-                        # print("Downscaling " + name)
                         filter_size = 1/(2 ** downscaling)
                         # downsampled_data = block_reduce(data, (filter_size, filter_size, filter_size), np.mean)
                         if name == "raw_crop":
-                            # print("Original: ", obj[...].shape)
-                            # print("Raw crop data before processing: ", obj[...])
                             downsampled_data = scale_input(3*(filter_size,), data)
-                            
                             # rescale, resize
                             obj.resize(downsampled_data.shape)  # Resize the dataset to match the downsampled data
                             obj[...] = downsampled_data
-                            # print("New: ", obj[...].shape)
-                            # print("Raw crop data after processing: ", obj[...])
                         else:
                             downsampled_data = scale_input(3*(filter_size,), data, is_segmentation=True)
                             # rescale, resize
                             obj.resize(downsampled_data.shape)  # Resize the dataset to match the downsampled data
                             obj[...] = downsampled_data
                     elif downscaling < 0:
-                        # Just save stuff to the dictionary
+                        # Simpl save everythin to the dictionary
                         items_dict[name] = data
                     else:
                         print("Downscaling not possible. Voxel size: "  + str(voxel_size) + " for " + file_name)
@@ -557,7 +551,7 @@ def resize_to_target(path_to_source, path_to_file, target_size = 8):
             if downscaling < 0:
                 # Upsample
                 # Create temporary file to be then renamed
-                with h5py.File(f"{os.path.splitext(path_to_file)[0]}_upsampled{os.path.splitext(path_to_file)[1]}", 'w') as f2:
+                with h5py.File(upsampled_path, 'w') as f2:
                     # Copy attributes
                     new_scale = -2 * downscaling # Only need to handle case -1 and -2 -> 2, 4
                     for item, value in f.attrs.items():
@@ -568,7 +562,6 @@ def resize_to_target(path_to_source, path_to_file, target_size = 8):
                         if label == "raw_crop":
                             f2[label] = scale_input(3*(new_scale,), f[label])
                         elif label == "label_crop/mito":
-                            # f2[label] = postprocess_seg_3d(scale_input(3*(new_scale,), f[label], is_segmentation = True)) 
                             temp = scale_input(3*(new_scale,), f[label], is_segmentation = True)
                             f2[label] = median_filter(temp, size=3)
                         else:
@@ -578,20 +571,22 @@ def resize_to_target(path_to_source, path_to_file, target_size = 8):
                 if os.path.exists(path_to_file):
                     os.remove(path_to_file) 
                 # Get back to original name
-                os.rename(f"{os.path.splitext(path_to_file)[0]}_upsampled{os.path.splitext(path_to_file)[1]}", path_to_file)
+                os.rename(upsampled_path, path_to_file)
                 print("Upsampled " , file_name)
 
             # Update the attributes
             elif downscaling >= 0:
-                # print(type(f.attrs['scale'][0]))
                 f.attrs['scale'] = [(x * (2 ** downscaling)) for x in f.attrs['scale']]
                 print("Downscaled " + file_name)
 
     except Exception as e:
         print(f"Failed to resize {path_to_file}: {str(e)}")
         # Delete file if it was created
+        upsampled_path = f"{os.path.splitext(path_to_file)[0]}_upsampled{os.path.splitext(path_to_file)[1]}"
         if os.path.exists(path_to_file):
             os.remove(path_to_file)
+        if os.path.exists(upsampled_path):
+            os.remove(upsampled_path)
 
 def visualize_some(dataset, number = 4):
     """
@@ -635,40 +630,44 @@ if __name__ == "__main__":
     print_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/txt/'
     originals_path = '/scratch-grete/projects/nim00007/data/cellmap/data_crops/'
     dest_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/'
-    blacklist = ["crop_247.h5", # Probably corrupted
-        "crop_421.h5", "crop_379.h5", "crop_472.h5", "crop_366.h5", "crop_337.h5"] # Lack of mitochondria
-    
+    blacklist = [
+        # Probably corrupted
+        "crop_247.h5", 
+        # Lack of mitochondria
+        "crop_421.h5", "crop_379.h5", "crop_472.h5", "crop_366.h5", "crop_337.h5",  
+        # Massive, would require a 2000, 4000, 12000 array or 715GB of memory (first), 2000, 4000, 4000 the second
+        "crop_282.h5", "crop_336.h5",
+        # Just really big, over 1000x1000x1000 native that would require > 200 GB
+        "crop_357.h5", "crop_289.h5", "crop_349.h5", "crop_358.h5", "crop_367.h5" 
+        ]
+        
     start = time.time()
     # On the fly parallelization
+    # numbers = ["0", "1"]
+    numbers = ["2", "3", "4", "5", "6", "7", "8", "9"]
     def process_file(file):
-        print("Processing ", file)
-        if file not in blacklist: 
+        if file not in blacklist and file[-4] in numbers:
+            print("Processing ", file)
             resize_to_target(f"{originals_path}{file}", f"{dest_path}{file}", 8)
 
-    with ThreadPoolExecutor(max_workers = 96) as executor:
-        futures = [executor.submit(process_file, file) for file in os.listdir(originals_path)] # Temp limit to 20 with _, ... zip(range(20), os.listdir(originals_path))
+    with ThreadPoolExecutor(max_workers = 64) as executor:
+        futures = [executor.submit(process_file, file) for file in os.listdir(originals_path)] 
         for future in as_completed(futures):
             future.result()
     end = time.time()
     print("Getting files took " + str((end-start)) + "s.")
 
-    # Check all files
-    for file in os.listdir(dest_path):
-        file_check(f"{dest_path}{file}")
+    # # Check all files
+    # for file in os.listdir(dest_path):
+    #     file_check(f"{dest_path}{file}")
     
     # # Test upsampling
     # crops = [
-    #     # 32x
-    #     # 16x:
-    #     # "crop_184.h5",
-    #     # "crop_230.h5",
-    #     # "crop_177.h5"
-    #     # 2x
-    #     "crop_256.h5",
+    #         "crop_336.h5"
     #     ]
     
     # for file in crops: 
-    #     print("Downsampling ", file)
+    #     print("Processing ", file)
     #     resize_to_target(f"{originals_path}{file}", f"{dest_path}{file}")    
 
     # Test downsampling

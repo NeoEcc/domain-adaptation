@@ -6,22 +6,20 @@ import os
 from torch_em.model import AnisotropicUNet
 from torch_em.util.debug import check_loader, check_trainer
 from sklearn.model_selection import train_test_split
+from model_utils import *
 
 # Prepare data
+path = "../files/crops/"
+data_paths = directory_to_path_list(path)
 
-all_paths_raw = os.listdir( "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/")
-print (all_paths_raw[0])
-all_paths = []
-for i in range(len(all_paths_raw)):
-    all_paths.append(f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/{all_paths_raw[i]}")
-print (all_paths[0])
+train_data_paths, val_data_paths = train_test_split(data_paths, test_size=0.2, random_state=42)
 
-train_data_paths, val_data_paths = train_test_split(all_paths, test_size=0.2, random_state=42)
-
-print("all_paths", all_paths.__len__())
+# Check split
+print("data_paths", data_paths.__len__())
 print("train_data_paths", train_data_paths.__len__())
 print("val_data_paths", val_data_paths.__len__())
 
+# Prepare the data loaders
 data_key = "raw_crop"
 train_label_paths = train_data_paths
 val_label_paths = val_data_paths
@@ -55,18 +53,8 @@ foreground = True
 affinities = False
 boundaries = True
 
-offsets = [
-    [-1, 0, 0], [0, -1, 0], [0, 0, -1],
-    [-2, 0, 0], [0, -3, 0], [0, 0, -3],
-    [-3, 0, 0], [0, -9, 0], [0, 0, -9]
-]
-
 label_transform, label_transform2 = None, None
-if affinities:
-    label_transform2 = torch_em.transform.label.AffinityTransform(
-        offsets=offsets, add_binary_target=foreground, add_mask=True
-    )
-elif boundaries:
+if boundaries:
     label_transform = torch_em.transform.label.BoundaryTransform(
         add_binary_target=foreground
     )
@@ -138,10 +126,7 @@ if in_channels is None:
     in_channels = 1
 
 if out_channels is None:
-    if affinities:
-        n_off = len(offsets)
-        out_channels = n_off + 1 if foreground else n_off
-    elif boundaries:
+    if boundaries:
         out_channels = 2 if foreground else 1
     elif foreground:
         out_channels = 1
