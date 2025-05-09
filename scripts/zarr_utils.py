@@ -5,6 +5,8 @@ import numpy as np
 import mrcfile
 import os
 import shutil
+import quilt3 as q3
+
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
@@ -214,6 +216,109 @@ def filter_h5_content(file_path, names=["mito", "fibsem-uint8"], max_threads=Non
     else:
         print("No data found")
 
+def download_zattr(name, download_path, bucket):
+    """
+    Only for parallelization in get_zattrs
+    Downloads the .zattrs file for a given name from the bucket to the specified download path.
+    """
+    try:
+        b = q3.Bucket(bucket)
+        b.fetch(f"{name}/{name}.zarr/recon-1/em/fibsem-uint8/.zattrs", f"{download_path}/{name}.zattrs")
+        print(f"Downloaded {name}.zattrs")
+    except Exception as e:
+        print(f"Failed to download {name}.zattrs: {e}")
+
+def get_zattrs(names, download_path, bucket, max_threads=None):
+    """
+    Downloads all .zattrs files for a list of names, in parallel.
+    """
+    max_threads = max_threads or min(32, len(names)) or 4  # Reasonable default
+
+    with ThreadPoolExecutor(max_workers=max_threads) as executor:
+        futures = [
+            executor.submit(download_zattr, name, download_path, bucket)
+            for name in names
+        ]
+        for future in as_completed(futures):
+            future.result()  # Triggers any exceptions
+
+def read_zattrs(folder_path, bucket_str):
+    """
+    Reads the content of all files in the path and prints the voxel size and name in a json file as 
+    ```
+    name: foo,
+    voxel_size: [z, y, x],
+    has_groundtruth: True,
+    has_inference: False
+    ```
+    Takes as input the path to the folder where the files are stored and the bucket string.
+    """
+    all_data = []
+    groundtruth = 0
+    inference = 0
+    groundtruth_and_inference = 0
+    for file in os.listdir(folder_path):
+        print("Attempting read of " + file )
+        if os.path.splitext(file)[1] != ".zattrs":
+            continue
+        # Get name and voxel size
+        b = q3.Bucket(bucket_str)
+        with open(f"{folder_path}{file}") as f:
+            data = json.load(f)
+        name = os.path.splitext(file)[0]
+
+        voxel_size = data['multiscales'][0]['datasets'][0]['coordinateTransformations'][0]['scale']
+        # Check if there is a labels folder, and if there is a ground truth folder or inference folder
+        has_groundtruth = False
+        has_inference = False
+        try:
+            data = b.ls(f"{name}/{name}.zarr/recon-1/labels/")
+            prefixes, keys, _ = data  # Unpack the tuple
+            
+            # Check in 'Prefix' fields
+            # Probably not needed?
+            for prefix_entry in prefixes:
+                if "groundtruth" in prefix_entry.get('Prefix', ''):
+                    has_groundtruth = True
+                if "inference" in prefix_entry.get('Prefix', ''):
+                    has_inference = True
+            
+            # Check in 'Key' fields
+            for key_entry in keys:
+                if "groundtruth" in prefix_entry.get('Key', ''):
+                    has_groundtruth = True
+                if "inference" in prefix_entry.get('Key', ''):
+                    has_inference = True
+        except Exception as e:
+            print("No labels folder found for " + name + ": " + str(e))
+        if has_groundtruth:
+            groundtruth += 1
+            if has_inference:
+                groundtruth_and_inference += 1
+        if has_inference:
+            inference += 1
+        # Make json
+        json_data = {
+            'name': file,
+            'voxel_size': voxel_size,
+            'has_groundtruth': has_groundtruth,
+            'has_inference': has_inference,
+        }
+        print(json_data)
+        all_data.append(json_data)
+        
+    overall_json = {
+        'inference': inference,
+        'groundtruth': groundtruth,
+        'groundtruth_and_inference': groundtruth_and_inference
+    }
+    all_data.append(overall_json)
+    try:
+        with open('../files/zattrs/data.json', 'w') as outfile:
+            json.dump(overall_json, outfile)
+            json.dump(all_data, outfile)
+    except:
+        print("Failed to write file")
 
 if __name__ == "__main__":
     names = [

@@ -37,110 +37,6 @@ def get_best_size(voxel_size, target_size, tollerance = 0.4) -> int:
     # print(f"Best compression for {voxel_list} with tollerance of {tollerance}: {compression}, equivalent to {x*pow(2, compression)} nm")
     return compression
 
-def download_zattr(name, download_path, bucket):
-    """
-    Only for parallelization in get_zattrs
-    Downloads the .zattrs file for a given name from the bucket to the specified download path.
-    """
-    try:
-        b = q3.Bucket(bucket)
-        b.fetch(f"{name}/{name}.zarr/recon-1/em/fibsem-uint8/.zattrs", f"{download_path}/{name}.zattrs")
-        print(f"Downloaded {name}.zattrs")
-    except Exception as e:
-        print(f"Failed to download {name}.zattrs: {e}")
-
-def get_zattrs(names, download_path, bucket, max_threads=None):
-    """
-    Downloads all .zattrs files for a list of names, in parallel.
-    """
-    max_threads = max_threads or min(32, len(names)) or 4  # Reasonable default
-
-    with ThreadPoolExecutor(max_workers=max_threads) as executor:
-        futures = [
-            executor.submit(download_zattr, name, download_path, bucket)
-            for name in names
-        ]
-        for future in as_completed(futures):
-            future.result()  # Triggers any exceptions
-
-def read_zattrs(folder_path, bucket_str):
-    """
-    Reads the content of all files in the path and prints the voxel size and name in a json file as 
-    ```
-    name: foo,
-    voxel_size: [z, y, x],
-    has_groundtruth: True,
-    has_inference: False
-    ```
-    Takes as input the path to the folder where the files are stored and the bucket string.
-    """
-    all_data = []
-    groundtruth = 0
-    inference = 0
-    groundtruth_and_inference = 0
-    for file in os.listdir(folder_path):
-        print("Attempting read of " + file )
-        if os.path.splitext(file)[1] != ".zattrs":
-            continue
-        # Get name and voxel size
-        b = q3.Bucket(bucket_str)
-        with open(f"{folder_path}{file}") as f:
-            data = json.load(f)
-        name = os.path.splitext(file)[0]
-
-        voxel_size = data['multiscales'][0]['datasets'][0]['coordinateTransformations'][0]['scale']
-        # Check if there is a labels folder, and if there is a ground truth folder or inference folder
-        has_groundtruth = False
-        has_inference = False
-        try:
-            data = b.ls(f"{name}/{name}.zarr/recon-1/labels/")
-            prefixes, keys, _ = data  # Unpack the tuple
-            
-            # Check in 'Prefix' fields
-            # Probably not needed?
-            for prefix_entry in prefixes:
-                if "groundtruth" in prefix_entry.get('Prefix', ''):
-                    has_groundtruth = True
-                if "inference" in prefix_entry.get('Prefix', ''):
-                    has_inference = True
-            
-            # Check in 'Key' fields
-            for key_entry in keys:
-                if "groundtruth" in prefix_entry.get('Key', ''):
-                    has_groundtruth = True
-                if "inference" in prefix_entry.get('Key', ''):
-                    has_inference = True
-        except Exception as e:
-            print("No labels folder found for " + name + ": " + str(e))
-        if has_groundtruth:
-            groundtruth += 1
-            if has_inference:
-                groundtruth_and_inference += 1
-        if has_inference:
-            inference += 1
-        # Make json
-        json_data = {
-            'name': file,
-            'voxel_size': voxel_size,
-            'has_groundtruth': has_groundtruth,
-            'has_inference': has_inference,
-        }
-        print(json_data)
-        all_data.append(json_data)
-        
-    overall_json = {
-        'inference': inference,
-        'groundtruth': groundtruth,
-        'groundtruth_and_inference': groundtruth_and_inference
-    }
-    all_data.append(overall_json)
-    try:
-        with open('../files/zattrs/data.json', 'w') as outfile:
-            json.dump(overall_json, outfile)
-            json.dump(all_data, outfile)
-    except:
-        print("Failed to write file")
-
 def download_folder(bucket, folder_path, download_path):
     """
     Downloads the folder from the folder_path in the bucket to the download_path.
@@ -445,48 +341,6 @@ def scale_input(scale, input_volume, is_segmentation=False):
         input_volume = rescale(input_volume, scale, preserve_range=True).astype(input_volume.dtype)
     return input_volume
 
-def postprocess_seg_3d(seg, area_threshold=1000, iterations=4, iterations_3d=8):
-    """
-    @private"""
-    # https://github.com/computational-cell-analytics/synapse-net/blob/ea5bbce1fa96d60e04add21df17571899733acf3/synapse_net/inference/util.py#L554
-    # Structure lement for 2d dilation in 3d.
-    structure_element = np.ones((3, 3))  # 3x3 structure for XY plane
-    structure_3d = np.zeros((1, 3, 3))  # Only applied in the XY plane
-    structure_3d[0] = structure_element
-
-    props = regionprops(seg)
-    for prop in props:
-        # Get bounding box and mask.
-        bb = tuple(slice(start, stop) for start, stop in zip(prop.bbox[:3], prop.bbox[3:]))
-        mask = seg[bb] == prop.label
-
-        # Fill small holes and apply closing.
-        mask = remove_small_holes(mask, area_threshold=area_threshold)
-        mask = np.logical_or(binary_closing(mask, iterations=iterations), mask)
-        mask = np.logical_or(binary_closing(mask, iterations=iterations_3d, structure=structure_3d), mask)
-        seg[bb][mask] = prop.label
-
-    return seg
-
-def fast_mode_filter(labels, labels_list=None, size=3):
-    """
-    @private
-    """
-    if labels_list is None:
-        labels_list = np.unique(labels)
-        
-    kernel = np.ones((size,) * labels.ndim)
-    vote_maps = []
-
-    for label in labels_list:
-        vote = convolve((labels == label).astype(np.uint8), kernel, mode='nearest')
-        vote_maps.append(vote)
-
-    # Stack and take argmax
-    vote_stack = np.stack(vote_maps, axis=0)  # shape: (num_labels, ...)
-    max_indices = np.argmax(vote_stack, axis=0)
-    return np.array(labels_list)[max_indices]
-
 def resize_to_target(path_to_source, path_to_file, target_size = 8):
     """
     Downsamples the dataset in path to the target size.
@@ -588,19 +442,28 @@ def resize_to_target(path_to_source, path_to_file, target_size = 8):
         if os.path.exists(upsampled_path):
             os.remove(upsampled_path)
 
-def visualize_some(dataset, number = 4):
+def check_dataset_empty(path_to_file, subpath = "label_crop/mito", remove = False):
     """
-    visualize the first `number x number x number` elements of the dataset in a matrix shape
-    """ 
-    for i in range(number):
-        for j in range(number):
-            elements = []
-            for k in range(number):
-                # Get the element at (i, j, k)
-                elements.append(dataset[i, j, k])
-            print(elements)
-        print("")
-        print("")
+    Verifies whether an HDF5 file contains nonempty dataset in subpath
+    """
+    ids = [3, 4]
+    with h5py.File(path_to_file, 'r') as f:
+        if "label_crop/all" in f.keys():
+            list_of_ids = np.unique(f["label_crop/all"])
+            print(list_of_ids)
+            if subpath not in f:
+                return False
+            if not np.any(f[subpath]):
+                print("Empty mito label")
+            return True
+                # print(np.unique(f["label_crop/mito"], return_counts=True))
+            if remove:
+                os.remove(f"{dest_path}{file}")
+                
+                
+                return False
+            # Else return true
+            return True
 
 def file_check(path_to_file):
     """
@@ -635,44 +498,47 @@ if __name__ == "__main__":
         "crop_247.h5", 
         # Lack of mitochondria
         "crop_421.h5", "crop_379.h5", "crop_472.h5", "crop_366.h5", "crop_337.h5",  
+        "crop_254.h5", "crop_411.h5", "crop_102.h5", "crop_351.h5", "crop_410.h5", "crop_257.h5",
         # Massive, would require a 2000, 4000, 12000 array or 715GB of memory (first), 2000, 4000, 4000 the second
-        "crop_282.h5", "crop_336.h5",
+        "crop_282.h5", "crop_336.h5", "crop_337.h5"
         # Just really big, over 1000x1000x1000 native that would require > 200 GB
         "crop_357.h5", "crop_289.h5", "crop_349.h5", "crop_358.h5", "crop_367.h5" 
         ]
-        
-    start = time.time()
-    # On the fly parallelization
-    # numbers = ["0", "1"]
-    numbers = ["2", "3", "4", "5", "6", "7", "8", "9"]
-    def process_file(file):
-        if file not in blacklist and file[-4] in numbers:
-            print("Processing ", file)
-            resize_to_target(f"{originals_path}{file}", f"{dest_path}{file}", 8)
+    
+    count_no_mito = 0
+    count = 0
+    for file in os.listdir(dest_path):
+    # for file in ["crop_211.h5"]:
+        print(file)
+        if check_dataset_empty(f"{dest_path}{file}"):
+            count += 1
+            # print("Wrong: " + file)
 
-    with ThreadPoolExecutor(max_workers = 64) as executor:
-        futures = [executor.submit(process_file, file) for file in os.listdir(originals_path)] 
-        for future in as_completed(futures):
-            future.result()
-    end = time.time()
-    print("Getting files took " + str((end-start)) + "s.")
+    # print("Samples with no mito: ", count_no_mito)
+    # start = time.time()
+    # # On the fly parallelization
+    # # numbers = ["0", "1"]
+    # numbers = ["2", "3", "4", "5", "6", "7", "8", "9"]
+    # def process_file(file):
+    #  # Only process 1/10 at a time per number if a list is provided, otherwise all
+    #     if file not in blacklist and (file[-4] in numbers or numbers is None):
+    #         print("Processing ", file)
+    #         resize_to_target(f"{originals_path}{file}", f"{dest_path}{file}", 8)
 
-    # # Check all files
+    # with ThreadPoolExecutor(max_workers = 64) as executor:
+    #     futures = [executor.submit(process_file, file) for file in os.listdir(originals_path)] 
+    #     for future in as_completed(futures):
+    #         future.result()
+    # end = time.time()
+    # print("Getting files took " + str((end-start)) + "s.")
+    
+
+
+    # for file in ["crop_357.h5", "crop_289.h5", "crop_349.h5", "crop_358.h5", "crop_367.h5" ]:
+    #     print("Upsampling " + file)
+    #     resize_to_target(f"{originals_path}{file}", f"{dest_path}{file}", 8)
+    #     file_check(f"{dest_path}{file}")
+    
+    # Check all files
     # for file in os.listdir(dest_path):
     #     file_check(f"{dest_path}{file}")
-    
-    # # Test upsampling
-    # crops = [
-    #         "crop_336.h5"
-    #     ]
-    
-    # for file in crops: 
-    #     print("Processing ", file)
-    #     resize_to_target(f"{originals_path}{file}", f"{dest_path}{file}")    
-
-    # Test downsampling
-    # for file in ["crop_1.h5", "crop_3.h5"]:
-    #     downsample_to_target(f"{originals_path}{file}", f"{dest_path}{file}")    
-    #     file_check(f"{dest_path}{file}")
-
-

@@ -11,6 +11,33 @@ from matplotlib import colors
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from skimage.transform import rescale
+from shutil import copyfile
+
+
+def check_inference(model, path_to_file, path_to_raw = "raw_crop"):
+    """
+    Given a model and a path to an HDF5 file, copies the file as x_inference.h5 
+    and adds to thenew  file the inference produced by the model.
+    """
+    # Copy the file, do checks on the extension
+    if ".h5" in path_to_file: 
+        path_to_copy = path_to_file.replace(".h5", "_inference.h5")
+    elif ".hdf5" in path_to_file:
+        path_to_copy = path_to_file.replace(".hdf5", "_inference.hdf5")
+    else:
+        raise ValueError("Passed file must be HDF5 (.h5 or .hdf5), got " + path_to_file)
+    copyfile(path_to_file, path_to_copy)
+    
+    # Prepare for inference and open data
+    model.eval()
+    try:
+        with h5py.File(path_to_copy, "r+") as f:
+            data = f[path_to_raw]
+            inference = model(data)
+            f["inference"] = inference
+    except Exception as e:
+        print(f"Failed to manipulate file {path_to_copy}: ", e)
+        raise e
 
 
 def directory_to_path_list(directory) -> list:
