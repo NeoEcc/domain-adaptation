@@ -28,11 +28,13 @@ label_key = "label_crop/mito"
 
 learning_rate = 1.0e-4      # learning rate for the optimizer
 batch_size = 8              # batch size for the dataloader
-epochs = 10                # number of epochs to train the model for
-iterations_per_epoch = 10 # number of iterations per epoch
+epochs = 5                # number of epochs to train the model for
+iterations_per_epoch = 2 # number of iterations per epoch
 random_seed = 42            # random seed for reproducibility
 classes = ["mito"]          # list of classes to segment
-patch_shape = (128,)*3      # !! To be studied !!
+patch_shape = (64,)*3      # !! To be studied !!
+val_split = 0.2
+num_workers = 8
 loss_function = torch_em.loss.DiceLoss()
 metric_function = torch_em.loss.DiceLoss()
 
@@ -65,32 +67,32 @@ optimizer = RAdam(
             model.parameters(), lr=learning_rate, decoupled_weight_decay=True
         )
 
-train_loader, val_loader = get_dataloader(directory_to_path_list(data_path), data_key, label_key, 0.1, patch_shape, batch_size)
+train_loader, val_loader = get_dataloader(directory_to_path_list(data_path), data_key, label_key, patch_shape, val_split, batch_size, num_workers = num_workers)
 
-# trainer = DefaultTrainer(
-#     name = model_name,
-#     model = model,
-#     train_loader = train_loader,
-#     val_loader = val_loader,
-#     optimizer = optimizer,
-#     metric = metric_function,
-#     loss = loss_function,
-#     device = device,
-#     save_root = save_path
-# )
-
-trainer = torch_em.default_segmentation_trainer( # Actually calls an instance of DefaultTrainer
-    name = model_name, 
+trainer = DefaultTrainer(
+    name = model_name,
     model = model,
-    train_loader = train_loader, 
+    train_loader = train_loader,
     val_loader = val_loader,
-    loss = loss_function, 
+    optimizer = optimizer,
     metric = metric_function,
-    learning_rate = learning_rate,
-    mixed_precision = True,
-    log_image_interval = 50,
-    device = device
+    loss = loss_function,
+    device = device,
+    save_root = save_path
 )
+
+# trainer = torch_em.default_segmentation_trainer( # Actually calls an instance of DefaultTrainer
+#     name = model_name, 
+#     model = model,
+#     train_loader = train_loader, 
+#     val_loader = val_loader,
+#     loss = loss_function, 
+#     metric = metric_function,
+#     learning_rate = learning_rate,
+#     mixed_precision = True,
+#     log_image_interval = 50,
+#     device = device
+# )
 
 #
 # Train
@@ -98,7 +100,7 @@ trainer = torch_em.default_segmentation_trainer( # Actually calls an instance of
 
 trainer.fit(
     epochs=epochs,
-    save_every_kth_epoch=5,
+    save_every_kth_epoch=1,
 )
 
 #

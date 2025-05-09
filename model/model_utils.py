@@ -33,8 +33,9 @@ def check_inference(model, path_to_file, path_to_raw = "raw_crop"):
     try:
         with h5py.File(path_to_copy, "r+") as f:
             data = f[path_to_raw]
-            inference = model(data)
+            inference, boundaries = model(data)
             f["inference"] = inference
+            f["boundaries"] = boundaries
     except Exception as e:
         print(f"Failed to manipulate file {path_to_copy}: ", e)
         raise e
@@ -59,7 +60,7 @@ def directory_to_path_list(directory) -> list:
         all_paths.append(f"{directory}{all_paths_raw[i]}")
     return all_paths
 
-def get_dataloader(paths, data_key, label_key, split, patch_shape, batch_size = 1):
+def get_dataloader(paths, data_key, label_key, patch_shape, split = 0.15, batch_size = 1, num_workers = 8):
     """"
     Returns training and validation dataloaders 
     using `default_segmentation_loader` from torch_em
@@ -75,19 +76,20 @@ def get_dataloader(paths, data_key, label_key, split, patch_shape, batch_size = 
         val_loader
     
     """
-
-   
     # For boundary and foreground predictions
     label_transform = torch_em.transform.label.BoundaryTransform(
         add_binary_target=True
     )
+
+    # Split according to split size
     train_data_paths, val_data_paths = train_test_split(paths, test_size=split, random_state=42)
     # Case of the files containing both data and labels
     train_label_paths = train_data_paths
     val_label_paths = val_data_paths
     kwargs = dict(
         ndim=3, patch_shape=patch_shape, batch_size=batch_size,
-        label_transform=label_transform, label_transform2=None
+        label_transform=label_transform, label_transform2=None,
+        num_workers = num_workers
     )
     # Define loaders
     train_loader = torch_em.default_segmentation_loader(
