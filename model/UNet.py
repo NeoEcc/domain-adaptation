@@ -14,7 +14,7 @@ from model_utils import *
 #
 
 # data_path = "../../mitochondria/files/test_crops/"
-data_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_crops"
+data_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops"
 # save_path = "../model/checkpoints/"
 save_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/model/"
 inference_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/inference_crops/"
@@ -27,18 +27,20 @@ label_key = "label_crop/mito"
 #
 
 learning_rate = 1.0e-4      # learning rate for the optimizer
-batch_size = 8              # batch size for the dataloader
-epochs = 5                # number of epochs to train the model for
-iterations_per_epoch = 2 # number of iterations per epoch
+batch_size = 1              # batch size for the dataloader
+epochs = 500                # number of epochs to train the model for
+iterations_per_epoch = 1000 # number of iterations per epoch
 random_seed = 42            # random seed for reproducibility
 classes = ["mito"]          # list of classes to segment
-patch_shape = (64,)*3      # !! To be studied !!
-val_split = 0.2
+patch_shape = (128,)*3      # !! To be studied !!
+val_split = 0.1
 num_workers = 8
 loss_function = torch_em.loss.DiceLoss()
 metric_function = torch_em.loss.DiceLoss()
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+# device = "cuda" if torch.cuda.is_available() else "cpu"
+# assert device == "cuda"
+device = "cuda"
 model_name = "Anisotropic-3d-UNet"
 
 #
@@ -107,5 +109,8 @@ trainer.fit(
 # Test inference
 #
 
-for file in os.listdir(inference_path):
-    check_inference(model, f"{inference_path}{file}")
+# print()
+# print("INFERENCE")
+# print()
+# for file in os.listdir(inference_path):
+#     check_inference(model, f"{inference_path}{file}")

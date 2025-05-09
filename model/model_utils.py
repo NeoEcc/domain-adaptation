@@ -33,6 +33,16 @@ def check_inference(model, path_to_file, path_to_raw = "raw_crop"):
     try:
         with h5py.File(path_to_copy, "r+") as f:
             data = f[path_to_raw]
+            # Ensure the data has the correct shape for the model (add channel dimension if missing)
+            if len(data.shape) == 3:  # Assuming data is (D, H, W), add channel dimension
+                data = np.expand_dims(data, axis=0)  # Shape becomes (1, D, H, W)
+            elif len(data.shape) == 4:  # Assuming data is (D, H, W, C), move channel dimension to the front
+                data = np.moveaxis(data, -1, 0)  # Shape becomes (C, D, H, W)
+                data = np.expand_dims(data, axis=0)  # Shape becomes (1, C, D, H, W)
+            elif len(data.shape) != 5:  # Ensure the final shape is (B, C, D, H, W)
+                raise ValueError(f"Unexpected data shape: {data.shape}, expected (1, 1, D, H, W)")
+                raise ValueError(f"Unexpected data shape: {data.shape}, expected (1, D, H, W)")
+
             inference, boundaries = model(data)
             f["inference"] = inference
             f["boundaries"] = boundaries
