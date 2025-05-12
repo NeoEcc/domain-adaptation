@@ -4,8 +4,9 @@ from glob import glob
 import napari
 import os
 import torch_em
-import time
+import random
 
+from torch_em.data.sampler import MinInstanceSampler
 import imageio.v3 as imageio
 from matplotlib import colors
 import matplotlib.pyplot as plt
@@ -19,6 +20,7 @@ def check_inference(model, path_to_file, path_to_raw = "raw_crop"):
     Given a model and a path to an HDF5 file, copies the file as x_inference.h5 
     and adds to thenew  file the inference produced by the model.
     """
+    print("Checking inference for ", path_to_file)
     # Copy the file, do checks on the extension
     if ".h5" in path_to_file: 
         path_to_copy = path_to_file.replace(".h5", "_inference.h5")
@@ -30,25 +32,25 @@ def check_inference(model, path_to_file, path_to_raw = "raw_crop"):
     
     # Prepare for inference and open data
     model.eval()
-    try:
-        with h5py.File(path_to_copy, "r+") as f:
-            data = f[path_to_raw]
-            # Ensure the data has the correct shape for the model (add channel dimension if missing)
-            if len(data.shape) == 3:  # Assuming data is (D, H, W), add channel dimension
-                data = np.expand_dims(data, axis=0)  # Shape becomes (1, D, H, W)
-            elif len(data.shape) == 4:  # Assuming data is (D, H, W, C), move channel dimension to the front
-                data = np.moveaxis(data, -1, 0)  # Shape becomes (C, D, H, W)
-                data = np.expand_dims(data, axis=0)  # Shape becomes (1, C, D, H, W)
-            elif len(data.shape) != 5:  # Ensure the final shape is (B, C, D, H, W)
-                raise ValueError(f"Unexpected data shape: {data.shape}, expected (1, 1, D, H, W)")
-                raise ValueError(f"Unexpected data shape: {data.shape}, expected (1, D, H, W)")
+    # try:
+    with h5py.File(path_to_copy, "r+") as f:
+        data = f[path_to_raw][:]
 
-            inference, boundaries = model(data)
-            f["inference"] = inference
-            f["boundaries"] = boundaries
-    except Exception as e:
-        print(f"Failed to manipulate file {path_to_copy}: ", e)
-        raise e
+        # Dimensionality check
+        if len(data.shape) == 3:
+            # data.unsqueeze(0)
+            data = np.expand_dims(data, axis=0)  # Shape becomes (1, D, H, W)
+            data = np.expand_dims(data, axis=0)  
+            # raise ValueError(f"Unexpected data shape: {data.shape}, expected (D, H, W)")
+
+        print("Raw: ", str(data.shape))
+        inference, boundaries = model(data)
+        print("Inference: ", str(inference.shape))
+        f["inference"] = inference
+        f["boundaries"] = boundaries
+    # except Exception as e:
+    #     print(f"Failed to manipulate file {path_to_copy}: ", e)
+    #     raise e
 
 
 def directory_to_path_list(directory) -> list:
@@ -70,7 +72,7 @@ def directory_to_path_list(directory) -> list:
         all_paths.append(f"{directory}{all_paths_raw[i]}")
     return all_paths
 
-def get_dataloader(paths, data_key, label_key, patch_shape, split = 0.15, batch_size = 1, num_workers = 8):
+def get_dataloader(paths, data_key, label_key, split, patch_shape, batch_size = 1, num_workers = 1):
     """"
     Returns training and validation dataloaders 
     using `default_segmentation_loader` from torch_em
@@ -86,12 +88,13 @@ def get_dataloader(paths, data_key, label_key, patch_shape, split = 0.15, batch_
         val_loader
     
     """
+
+    sampler = MinInstanceSampler(2, 1, min_size = 5000)
+   
     # For boundary and foreground predictions
     label_transform = torch_em.transform.label.BoundaryTransform(
         add_binary_target=True
     )
-
-    # Split according to split size
     train_data_paths, val_data_paths = train_test_split(paths, test_size=split, random_state=42)
     # Case of the files containing both data and labels
     train_label_paths = train_data_paths
@@ -104,11 +107,11 @@ def get_dataloader(paths, data_key, label_key, patch_shape, split = 0.15, batch_
     # Define loaders
     train_loader = torch_em.default_segmentation_loader(
         train_data_paths, data_key, train_label_paths, label_key,
-        rois=None, **kwargs
+        rois = None, sampler = sampler, with_padding = True, **kwargs
     )
     val_loader = torch_em.default_segmentation_loader(
         val_data_paths, data_key, val_label_paths, label_key,
-        rois=None, **kwargs
+        rois = None, sampler = sampler, with_padding= True,  **kwargs
     )
     
     return train_loader, val_loader
