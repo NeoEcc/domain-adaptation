@@ -4,18 +4,20 @@ from glob import glob
 import napari
 import os
 import torch_em
-import random
+import torch
+
 
 from torch_em.data.sampler import MinInstanceSampler
 import imageio.v3 as imageio
 from matplotlib import colors
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
-from skimage.transform import rescale
+from skimage.transform import resize
 from shutil import copyfile
 
 
-def check_inference(model, path_to_file, path_to_raw = "raw_crop"):
+
+def check_inference(model, path_to_file, slice_shape = (128,)*3, path_to_raw = "raw_crop"):
     """
     Given a model and a path to an HDF5 file, copies the file as x_inference.h5 
     and adds to thenew  file the inference produced by the model.
@@ -32,26 +34,49 @@ def check_inference(model, path_to_file, path_to_raw = "raw_crop"):
     
     # Prepare for inference and open data
     model.eval()
-    # try:
-    with h5py.File(path_to_copy, "r+") as f:
-        data = f[path_to_raw][:]
+    try:
+        with h5py.File(path_to_copy, "r+") as f:
+            data = f[path_to_raw][:]
 
-        # Dimensionality check
-        if len(data.shape) == 3:
-            # data.unsqueeze(0)
-            data = np.expand_dims(data, axis=0)  # Shape becomes (1, D, H, W)
-            data = np.expand_dims(data, axis=0)  
-            # raise ValueError(f"Unexpected data shape: {data.shape}, expected (D, H, W)")
+            # Dimensionality check
+            if len(data.shape) == 3:
+                # data.unsqueeze(0)
+                data = np.expand_dims(data, axis=0)  
+                data = np.expand_dims(data, axis=0)  # Shape becomes (1, 1, D, H, W)
+                
+            elif len(data.shape) == 4:
+                data = np.expand_dims(data, axis=0)  
+            elif len != 5:
+                raise ValueError(f"Unexpected data shape: {data.shape}, expected (1, 1, D, H, W)")
 
-        print("Raw: ", str(data.shape))
-        inference, boundaries = model(data)
-        print("Inference: ", str(inference.shape))
-        f["inference"] = inference
-        f["boundaries"] = boundaries
-    # except Exception as e:
-    #     print(f"Failed to manipulate file {path_to_copy}: ", e)
-    #     raise e
+            print("Initial: ", data.shape, " type: ", type(data))
+            # Use negative index to handle all data shapes
 
+            if(slice_shape[-1] > data.shape[-1]) or (slice_shape[-3] > data.shape[-3]):
+                add_shape = (
+                    (0,)*2, 
+                    (0,)*2,
+                    (int((slice_shape[-3]-data.shape[-3])/2),)*2, 
+                    (int((slice_shape[-2]-data.shape[-2])/2),)*2, 
+                    (int((slice_shape[-1]-data.shape[-1])/2),)*2, 
+                    )
+                data = np.pad(data, add_shape, mode = "reflect")
+
+            if data.shape[-3] > slice_shape [-3] or data.shape[-1] > slice_shape [-1]:
+                data = resize(data, (1, 1) + slice_shape, anti_aliasing= True)
+            data_tensor = torch.from_numpy(data).float()  # Convert to PyTorch tensor
+            result = model(data_tensor)
+            print("Result: ", result.shape)
+
+            # inference, boundaries = model(data_tensor)
+            # print("Inference: ", str(inference.shape))
+            f["inference"] = int(result[0][0].detach().numpy())
+            f["boundaries"] = int(result[0][1].detach().numpy())
+    except Exception as e:
+        print(f"Failed test inference for {path_to_copy}: ", e)
+        if os.path.exists(path_to_copy):
+            os.remove(path_to_copy)
+        raise e
 
 def directory_to_path_list(directory) -> list:
     """

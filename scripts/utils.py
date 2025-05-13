@@ -46,7 +46,6 @@ def download_folder(bucket, folder_path, download_path):
         name = os.path.basename(folder_path)
         if name == "":
             download_path = download_path + "/"
-        # print(f"Downloading {name} to {download_path}")
         bucket.fetch(folder_path, f"{download_path}")
     except Exception as e:
         print(f"Failed to download {folder_path}: {e}")
@@ -101,12 +100,16 @@ def read_folder(bucket, path, download_path, folders_to_ignore, name):
 def get_folder_parallel(bucket, path, download_path, name="s0", max_threads=None, folders_to_ignore=[], file_to_read=None):
     """
     Explores folders in buckets and downloads the required folders using as many threads as given.
-    Ignores folders with names in the list ["masks", "inference"].
+    Ignores folders with names in the list folders_to_ignore and adds all levels aside from the 
+    specified one, if it is of the kind s0-s8.
+    
+    If the path to a file is provided, the exploration step will be skipped in favor of using the 
+    content of the file. 
 
     Args:
         bucket: bucket object where to download from
         path: path inside the bucket (END WITH "/")
-        download_path: path where to download the file, of the type base/files/name.zarr CANNOT END WITH "/"
+        download_path: path where to download the file, of the type base/files/name.zarr 
         name: name of the folder to find
         max_threads: number of threads to use for downloading
         folders_to_ignore: list of folders to ignore
@@ -120,8 +123,9 @@ def get_folder_parallel(bucket, path, download_path, name="s0", max_threads=None
     # This will make the search eternally long going through all the folders in s0 and so on
     # An explicit check is required
     other_folders = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"]
-    other_folders.remove(name)
-    folders_to_ignore.extend(other_folders)
+    if name in other_folders:
+        other_folders.remove(name)
+        folders_to_ignore.extend(other_folders)
     # If there is a file to read, read it and skip the exploration
     # Otherwise, explore the folders
     if not file_to_read:
@@ -326,9 +330,6 @@ def read_attributes_h5(folder_path, print_path = None):
                 json.dump(jsons, outfile)
         except:
             print("Failed to write file")
-    else:
-        print("SHAPES:")
-        print(jsons)
 
 def scale_input(scale, input_volume, is_segmentation=False):
     """
@@ -444,21 +445,37 @@ def resize_to_target(path_to_source, path_to_file, target_size = 8):
 
 def check_dataset_empty(path_to_file, subpath = "label_crop/mito", remove = False):
     """
-    Verifies whether an HDF5 file contains nonempty dataset in subpath
+    Verifies whether an HDF5 file contains nonempty dataset in subpath.
+    If it is empty, verifies whether the "label_crop/all" dataset contains 
+    mito, i.e. id 3.
+    If remove is set to true, remove all labels which have no instance of mito
+    in all or in the label. 
+
+    TODO: add creation of mask from all if mito is empty and there exist an 
+    instance of mito in "label_crop/all".  
     """
-    ids = [3, 4]
+    ids = [3, 4] # IDs that refer to mitochondria
+    file_name = os.path.basename(path_to_file)
+    
     with h5py.File(path_to_file, 'r') as f:
+        # Case there is an all crop
         if "label_crop/all" in f.keys():
             list_of_ids = np.unique(f["label_crop/all"])
             print(list_of_ids)
             if subpath not in f:
-                return False
-            if not np.any(f[subpath]):
+                if ids in list_of_ids:
+                    # Case we have mito in all but not in mito, worst case
+                    print(file_name + " lacks mito label but has some in \"all\"")
+                else:
+                    print(file_name + " has no reference to mito")
+                    if remove:
+                        os.remove(path_to_file)
+            # Case the label is all zeros
+            elif not np.any(f[subpath]):
                 print("Empty mito label")
-            return True
                 # print(np.unique(f["label_crop/mito"], return_counts=True))
-            if remove:
-                os.remove(f"{dest_path}{file}")
+                if remove:
+                    os.remove(path_to_file)
                 
                 
                 return False
@@ -488,7 +505,7 @@ def file_check(path_to_file):
                 print(os.path.basename(path_to_file), ": failed to open dataset mito: ", e)
     except Exception as e:
         print(os.path.basename(path_to_file), ": failed to open + ", e)
-# Testsu
+
 if __name__ == "__main__":
     print_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/txt/'
     originals_path = '/scratch-grete/projects/nim00007/data/cellmap/data_crops/'
@@ -505,14 +522,16 @@ if __name__ == "__main__":
         "crop_357.h5", "crop_289.h5", "crop_349.h5", "crop_358.h5", "crop_367.h5" 
         ]
     
-    count_no_mito = 0
-    count = 0
-    for file in os.listdir(dest_path):
-    # for file in ["crop_211.h5"]:
-        print(file)
-        if check_dataset_empty(f"{dest_path}{file}"):
-            count += 1
-            # print("Wrong: " + file)
+    read_attributes_h5("/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/")
+
+    # count_no_mito = 0
+    # count = 0
+    # for file in os.listdir(dest_path):
+    # # for file in ["crop_211.h5"]:
+    #     print(file)
+    #     if check_dataset_empty(f"{dest_path}{file}"):
+    #         count += 1
+    #         # print("Wrong: " + file)
 
     # print("Samples with no mito: ", count_no_mito)
     # start = time.time()

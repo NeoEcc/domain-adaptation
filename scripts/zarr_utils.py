@@ -5,6 +5,7 @@ import numpy as np
 import mrcfile
 import os
 import shutil
+import json
 import quilt3 as q3
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
