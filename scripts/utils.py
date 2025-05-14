@@ -3,17 +3,13 @@ import os
 import quilt3 as q3
 import json
 import h5py
-import torch.nn as nn
 import torch
 import numpy as np
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from zarr_utils import zarr_to_h5, export_data
-from skimage.measure import block_reduce, regionprops
 from skimage.transform import resize, rescale
-from skimage.morphology import remove_small_holes
 from scipy.ndimage import binary_closing, generic_filter, convolve, median_filter
-from scipy.stats import mode
 
 
 # Tried from https://hdmf-zarr.readthedocs.io/en/dev/tutorials/plot_convert_nwb_hdf5.html
@@ -344,7 +340,11 @@ def scale_input(scale, input_volume, is_segmentation=False):
 
 def resize_to_target(path_to_source, path_to_file, target_size = 8):
     """
-    Downsamples the dataset in path to the target size.
+    Given the path to a crop, it creates a copy in the destination
+    path which approximates the target size. 
+
+    Can perform unlimited downsampling or up to twice upsampling.
+
 
     Args:
         path_to_source (str): Path to the source file
@@ -357,27 +357,26 @@ def resize_to_target(path_to_source, path_to_file, target_size = 8):
         file_name = os.path.basename(path_to_file)
         with h5py.File(path_to_file, "r+") as f:
             upsampled_path = None
-            # Get downscaling: if -1, upsample. If over 32, do nothing
+            # Get downscaling: if -1 or -2, upsample. 
+            # If voxel size is over 32, discard crop
             voxel_size = f.attrs["scale"][1]
             if voxel_size == target_size:
-                print("Voxel size is already correct for " + file_name)
+                # print("Voxel size is already correct for " + file_name)
                 downscaling = 0
                 return
             elif voxel_size < target_size: 
                 downscaling = get_best_size(voxel_size, target_size)
             elif voxel_size > target_size and voxel_size <= 2*target_size:
-                # print("Voxel size currently not supported: " + str(voxel_size) + " for " + path_to_file)
                 downscaling = -1
                 upsampled_path = f"{os.path.splitext(path_to_file)[0]}_upsampled{os.path.splitext(path_to_file)[1]}"
-            # elif voxel_size > target_size and voxel_size <= 4* target_size:
-            #     downscaling = -2
-            #     upsampled_path = f"{os.path.splitext(path_to_file)[0]}_upsampled{os.path.splitext(path_to_file)[1]}"
             else:
-                print("Voxel size currently not supported: " + str(voxel_size) + " for " + file_name)
+                print("Voxel size not supported: " + str(voxel_size) + " for " + file_name)
                 os.remove(path_to_file)
                 downscaling = None
                 return
             # Iterate over the datasets
+            # If downsampling, perform it on the spot
+            # If upsampling, save in the dictionary for later
             items_dict = {}
             def process_dataset(name, obj):
                 if isinstance(obj, h5py.Dataset):
@@ -403,9 +402,11 @@ def resize_to_target(path_to_source, path_to_file, target_size = 8):
                         print("Downscaling not possible. Voxel size: "  + str(voxel_size) + " for " + file_name)
             f.visititems(process_dataset)
             
+            # Case upsampling: must create new dataset 
+            # Due to HDF5 constraints on dataset size
             if downscaling < 0:
                 # Upsample
-                # Create temporary file to be then renamed
+                # Create second file to be then renamed
                 with h5py.File(upsampled_path, 'w') as f2:
                     # Copy attributes
                     new_scale = -2 * downscaling # Only need to handle case -1 and -2 -> 2, 4
@@ -443,13 +444,15 @@ def resize_to_target(path_to_source, path_to_file, target_size = 8):
         if os.path.exists(upsampled_path):
             os.remove(upsampled_path)
 
-def check_dataset_empty(path_to_file, subpath = "label_crop/mito", remove = False):
+def check_dataset_empty(path_to_file, subpath = "label_crop/mito", copy_path = None, remove = False):
     """
     Verifies whether an HDF5 file contains nonempty dataset in subpath.
     If it is empty, verifies whether the "label_crop/all" dataset contains 
     mito, i.e. id 3.
-    If remove is set to true, remove all labels which have no instance of mito
-    in all or in the label. 
+
+    If copy_path is not none, copy all valid crops there.
+
+    If remove is True, delete original files from folder.
 
     TODO: add creation of mask from all if mito is empty and there exist an 
     instance of mito in "label_crop/all".  
@@ -479,6 +482,9 @@ def check_dataset_empty(path_to_file, subpath = "label_crop/mito", remove = Fals
                 
                 
                 return False
+            if copy_path is not None:
+                print("Copying file: ", path_to_file)
+                shutil.copyfile(path_to_file, copy_path)
             # Else return true
             return True
 
@@ -506,10 +512,77 @@ def file_check(path_to_file):
     except Exception as e:
         print(os.path.basename(path_to_file), ": failed to open + ", e)
 
+def all_to_mito(path_to_source, path_to_file):
+    """
+    Given the path to a crop, it creates a copy in the destination
+    path and attempts to find mitochondria in the "all" label.
+    If some is found and mito is not empty, will replace or create 
+    a new dataset with the mito inforamtion.
+
+    Args:
+        path_to_source (str): Path to the source file
+        path_to_file (str): Path where to copy the file
+    """
+    ids = [3, 4] # IDs that refer to mitochondria
+    with h5py.File(path_to_source, 'r') as f:
+        if "label_crop/mito" in f:
+            # Case mito is there: check if it is empty
+            if np.any(f["label_crop/mito"]):
+                # Case there is something
+                # Skip in any case
+                print("Mito dataset is not empty")
+                shutil.copyfile(path_to_source, path_to_file)
+                return
+            # Case it is empty, check all
+            if "label_crop/all" in f:
+                list_of_ids = np.unique(f["label_crop/all"])
+                if any(x in list_of_ids for x in ids):
+                    # Case there are mitochondria in all and mito is empty
+                    # Create a new mito label with 1 if id in ids, 0 otherwise
+                    new_mito = np.isin(f["label_crop/all"], ids).astype(np.uint8)
+                    shutil.copyfile(path_to_source, path_to_file)
+                    with h5py.File(path_to_file, 'r+') as f2:
+                        f2["label_crop/mito"] = new_mito
+                    print("Created copy and added mito from all")
+                    return
+                else:
+                    # Case mito is empty and there is nothing in all
+                    print("Mito is empty and there is no trace in all")
+                    return
+            else:
+                print("No 'label_crop/all' found. ")
+                return
+        else:
+            # Case mito is not there
+            # same but create 
+            if "label_crop/all" in f:
+                list_of_ids = np.unique(f["label_crop/all"])
+                if any(x in list_of_ids for x in ids):
+                    # Case there are mitochondria
+                    # Create a new mito label with 1 if id in ids, 0 otherwise
+                    new_mito = np.isin(f["label_crop/all"], ids).astype(np.uint8)
+                    print("Copying: ", path_to_source , " to ", path_to_file)
+                    shutil.copyfile(path_to_source, path_to_file)
+                    with h5py.File(path_to_file, 'r+') as f2:
+                        # Different here
+                        f2.create_dataset("label_crop/mito", new_mito.shape, np.uint8, new_mito)
+                    print("Created copy and added mito from all")
+                    return
+                else:
+                    print("No mito and no mito in all found")
+                    return
+            else:
+                # Case no mito 
+                print("No 'mito' or 'label_crop/all' found. ")
+                return
+    print("Something went wrong for ", path_to_file)
+
+
 if __name__ == "__main__":
     print_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/txt/'
     originals_path = '/scratch-grete/projects/nim00007/data/cellmap/data_crops/'
     dest_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/'
+    file_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/'
     blacklist = [
         # Probably corrupted
         "crop_247.h5", 
@@ -521,9 +594,17 @@ if __name__ == "__main__":
         # Just really big, over 1000x1000x1000 native that would require > 200 GB
         "crop_357.h5", "crop_289.h5", "crop_349.h5", "crop_358.h5", "crop_367.h5" 
         ]
-    
-    read_attributes_h5("/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/")
 
+
+    # Test all to mito
+    for file, _ in zip(os.listdir(dest_path), range(50)):
+        print("Checking ", file)
+        all_to_mito(f"{dest_path}{file}", f"{file_path}test_created_crops/{file}")
+
+    # for file in os.listdir(dest_path):
+    #     print("Checking ", file)
+    #     check_dataset_empty(f"{dest_path}{file}", copy_path = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/mito_crops/{file}")
+    
     # count_no_mito = 0
     # count = 0
     # for file in os.listdir(dest_path):
