@@ -523,7 +523,7 @@ def all_to_mito(path_to_source, path_to_file):
         path_to_source (str): Path to the source file
         path_to_file (str): Path where to copy the file
     """
-    ids = [3, 4] # IDs that refer to mitochondria
+    ids = [3, 4, 5, 50] # IDs that refer to mitochondria
     with h5py.File(path_to_source, 'r') as f:
         if "label_crop/mito" in f:
             # Case mito is there: check if it is empty
@@ -597,7 +597,8 @@ if __name__ == "__main__":
 
 
     # Test all to mito
-    for file, _ in zip(os.listdir(dest_path), range(50)):
+    # for file, _ in zip(os.listdir(dest_path), range(50)):
+    for file in os.listdir(dest_path):
         print("Checking ", file)
         all_to_mito(f"{dest_path}{file}", f"{file_path}test_created_crops/{file}")
 
