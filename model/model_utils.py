@@ -3,6 +3,8 @@ import numpy as np
 from glob import glob
 import napari
 import os
+
+import torch.utils.data.dataset
 import torch_em
 import torch
 
@@ -60,18 +62,20 @@ def check_inference(model, path_to_file, slice_shape = (128,)*3, path_to_raw = "
                     (int((slice_shape[-2]-data.shape[-2])/2),)*2, 
                     (int((slice_shape[-1]-data.shape[-1])/2),)*2, 
                     )
-                data = np.pad(data, add_shape, mode = "reflect")
+                data = np.pad(data, add_shape, mode = "constant", constant_values= 0)
 
             if data.shape[-3] > slice_shape [-3] or data.shape[-1] > slice_shape [-1]:
                 data = resize(data, (1, 1) + slice_shape, anti_aliasing= True)
             data_tensor = torch.from_numpy(data).float()  # Convert to PyTorch tensor
             result = model(data_tensor)
-            print("Result: ", result.shape)
+            # Suppose we get (1, 2, z, y, x)
+            # print("Result: ", result[0][0])
 
-            # inference, boundaries = model(data_tensor)
-            # print("Inference: ", str(inference.shape))
-            f["inference"] = int(result[0][0].detach().numpy())
-            f["boundaries"] = int(result[0][1].detach().numpy())
+            # TODO: implement same thing with dataloader instead1
+            f.create_dataset("foreground", result[0][0].shape,  np.float32, )
+            f.create_dataset("boundaries", result[0][1].shape,  np.float32, result[0][1].detach().numpy())
+            # f["foreground"] = (result[0][0].detach().numpy() * 255).astype(np.uint8)
+            # f["boundaries"] = (result[0][1].detach().numpy() * 255).astype(np.uint8)
     except Exception as e:
         print(f"Failed test inference for {path_to_copy}: ", e)
         if os.path.exists(path_to_copy):
@@ -114,7 +118,7 @@ def get_dataloader(paths, data_key, label_key, split, patch_shape, batch_size = 
     
     """
 
-    sampler = MinInstanceSampler(2, 1, min_size = 5000)
+    sampler = MinInstanceSampler(2, 0.95, min_size = 2500)
    
     # For boundary and foreground predictions
     label_transform = torch_em.transform.label.BoundaryTransform(
@@ -141,13 +145,42 @@ def get_dataloader(paths, data_key, label_key, split, patch_shape, batch_size = 
     
     return train_loader, val_loader
 
+def get_inference_dataloader(paths, raw_key, patch_shape, batch_size = 1, num_workers = 1):
+    # TODO!
+    """
+    Returns a dataloader for inference without labels.
+    Args:
+        paths: list of paths to the inference data
+        raw_key: key to access raw data in the files (such as "raw_crop" if inside an hdf5 file)
+        patch_shape: tuple representing the size of each patch
+        batch_size: number of items used in every batch
+        num_workers: number of workers for data loading
+    Returns:
+        inference_loader
+    """
+    dataset = torch.utils.data.IterableDataset(
+        paths=paths,
+        raw_key=raw_key,
+        patch_shape=patch_shape,
+        ndim=3
+    )
+    inference_loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        shuffle=False
+    )
+    return inference_loader
+
+
+
 def get_random_colors(labels):
     n_labels = len(np.unique(labels)) - 1
     cmap = [[0, 0, 0]] + np.random.rand(n_labels, 3).tolist()
     cmap = colors.ListedColormap(cmap)
     return cmap
 
-def plot_samples(image, labels, cmap="gray", view_napari=False):
+def plot_samples(image, labels, cmap="gray", view_napari=True):
     def _get_mpl_plots(image, labels):
         fig, ax = plt.subplots(1, 2)
 
@@ -168,3 +201,11 @@ def plot_samples(image, labels, cmap="gray", view_napari=False):
         napari.run()
     else:
         _get_mpl_plots(image, labels)
+
+if __name__ == "__main__":
+    test_dataloader = get_inference_dataloader(
+        ["/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/crop_3.h5"],
+        "raw_crop",
+        (128,)*3,
+        )
+    print(test_dataloader)

@@ -3,13 +3,13 @@ import torch.nn as nn
 import torch_em
 import os
 import torch
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.optim import RAdam
 from torch_em.model import AnisotropicUNet, get_vision_transformer
 from torch_em.trainer import DefaultTrainer
 from torch_em.util import load_model
 from sklearn.model_selection import train_test_split
 from model_utils import *
-import multiprocessing
 
 # Switch between inference and training
 
@@ -19,11 +19,11 @@ is_inference = True
 # Hyperparameters
 #
 
-model_name = "Anisotropic-3d-UNet-fresh"
+model_name = "Anisotropic-3d-UNet"
 
-learning_rate = 1.0e-4      # learning rate for the optimizer
+learning_rate = 2.5e-4      # learning rate for the optimizer
 batch_size = 1              # batch size for the dataloader
-epochs = 1#5000                # number of epochs to train the model for
+epochs = 5000                # number of epochs to train the model for
 iterations_per_epoch = 100 # number of iterations per epoch
 random_seed = 42            # random seed for reproducibility
 classes = ["mito"]          # list of classes to segment
@@ -39,7 +39,7 @@ device = "cuda"             # Device required for training
 #
 
 # Path of the training folder
-data_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops"
+data_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/mito_crops/"
 # data_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_crops"
 
 # Path to the checkpoints folder
@@ -49,7 +49,9 @@ save_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/model/"
 inference_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/inference_crops/"
 
 # Path to the best version of the model
-best_path = f"{save_path}checkpoints/{model_name}/latest.pt"
+# Give none to train from scratch
+# best_path = None
+best_path = f"{save_path}checkpoints/{model_name}/best.pt"
 
 # Keys for raw data and for labels
 data_key = "raw_crop"
@@ -73,11 +75,12 @@ model = AnisotropicUNet(
     in_channels=in_channels, out_channels=out_channels, scale_factors=scale_factors, final_activation="Sigmoid"
 )
 
-best_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/model/checkpoints/Anisotropic-3d-UNet-fresh/"
-
+if best_path is not None and not os.path.exists(best_path):
+    raise ValueError("Path to model is empty: " + best_path)
 # Load weights if any
-if best_path is not None and os.path.exists(best_path):
+if best_path is not None:
     model = load_model(best_path, model)
+
 
 #
 # Data loaders and trainer
@@ -88,21 +91,34 @@ optimizer = RAdam(
             model.parameters(), lr=learning_rate, decoupled_weight_decay=True
         )
 
-train_loader, val_loader = get_dataloader(directory_to_path_list(data_path), data_key, label_key, patch_shape, val_split, batch_size, num_workers = num_workers)
+train_loader, val_loader = get_dataloader(
+    directory_to_path_list(data_path), 
+    data_key,
+    label_key, 
+    val_split, 
+    patch_shape, 
+    batch_size,
+    num_workers = num_workers
+    )
+
+scheduler = ReduceLROnPlateau(optimizer)
 
 trainer = DefaultTrainer(
     name = model_name,
-    model = model,
     train_loader = train_loader,
     val_loader = val_loader,
-    optimizer = optimizer,
-    metric = metric_function,
+    model = model,
     loss = loss_function,
+    optimizer = optimizer,
+    early_stopping= 25,
+    lr_scheduler= scheduler,
+    metric = metric_function,
     device = device,
     save_root = save_path
 )
 if __name__ == "__main__":
     if not is_inference:
+
         #
         # Train
         #
@@ -113,29 +129,11 @@ if __name__ == "__main__":
         )
 
     else:
+
         #   
         # Test inference
         #
 
-        for file in os.listdir(inference_path):
+        # for file in os.listdir(inference_path):
+        for file in ["crop_118.h5", "crop_141.h5"]:
             check_inference(model, f"{inference_path}{file}")
-
-    
-# Overfitting curve:
-# Epoch 35:  average [s/it]: 0.118461, current metric: 1.999343, best metric: 1.979291:   0%|
-# Epoch 61:  average [s/it]: 0.271925, current metric: 2.000000, best metric: 1.979291:   1%|▉   
-# Epoch 71:  average [s/it]: 0.120462, current metric: 2.000000, best metric: 1.979289:   1%|█   
-# Epoch 107: average [s/it]: 0.118276, current metric: 2.000000, best metric: 1.917568:   2%|█▌
-# Epoch 128: average [s/it]: 0.118628, current metric: 2.000000, best metric: 1.885475:   3%|█▊
-# Epoch 145: average [s/it]: 0.309648, current metric: 1.924561, best metric: 1.885475:   3%|██     
-# Epoch 154: average [s/it]: 0.120972, current metric: 2.000000, best metric: 1.885475:   3%|██▏
-# Epoch 164: average [s/it]: 0.121674, current metric: 2.000000, best metric: 1.885475:   3%|██
-# Epoch 204: average [s/it]: 0.126037, current metric: 1.998157, best metric: 1.885475:   4%|██▉
-# Epoch 246: average [s/it]: 0.119816, current metric: 2.000000, best metric: 1.885475:   5%|███▌ 
-# Epoch 282: average [s/it]: 0.118742, current metric: 2.000000, best metric: 1.885475:   6%|████
-# Epoch 307: average [s/it]: 0.120881, current metric: 2.000000, best metric: 1.885475:   6%|████▍
-# Epoch 332: average [s/it]: 0.122422, current metric: 2.000000, best metric: 1.885475:   7%|████▋
-# Epoch 391: average [s/it]: 0.121376, current metric: 2.000000, best metric: 1.885475:   8%|█████▌
-# Epoch 460: average [s/it]: 0.126515, current metric: 1.988828, best metric: 1.785747:   9%|██████▌
-# Epoch 550: average [s/it]: 0.122639, current metric: 1.922272, best metric: 1.716292:  11%|███████▊ 
-# Epoch 736: average [s/it]: 0.122496, current metric: 1.964961, best metric: 1.716292:  15%|██████████
