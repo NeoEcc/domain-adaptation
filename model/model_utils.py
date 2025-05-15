@@ -3,11 +3,8 @@ import numpy as np
 from glob import glob
 import napari
 import os
-
-import torch.utils.data.dataset
 import torch_em
 import torch
-
 
 from torch_em.data.sampler import MinInstanceSampler
 import imageio.v3 as imageio
@@ -18,11 +15,18 @@ from skimage.transform import resize
 from shutil import copyfile
 
 
-
 def check_inference(model, path_to_file, slice_shape = (128,)*3, path_to_raw = "raw_crop"):
     """
-    Given a model and a path to an HDF5 file, copies the file as x_inference.h5 
-    and adds to thenew  file the inference produced by the model.
+    Perform inference using a given model on data from an HDF5 file and save the results 
+    to a new HDF5 file appending the inference results (e.g., "foreground" and "boundaries")
+     to the new file.
+    Args:
+        model (torch.nn.Module): The PyTorch model to use for inference
+        path_to_file (str): Path to the input HDF5 file.
+        slice_shape (tuple of int, optional): The shape of the slices to be used for inference. 
+            Defaults to (128, 128, 128).
+        path_to_raw (str, optional): The key in the HDF5 file that contains the raw data 
+            to be used for inference. Defaults to "raw_crop".
     """
     print("Checking inference for ", path_to_file)
     # Copy the file, do checks on the extension
@@ -34,53 +38,25 @@ def check_inference(model, path_to_file, slice_shape = (128,)*3, path_to_raw = "
         raise ValueError("Passed file must be HDF5 (.h5 or .hdf5), got " + path_to_file)
     copyfile(path_to_file, path_to_copy)
     
-    # Prepare for inference and open data
+    # Prepare for inference and get data
     model.eval()
+    loader = get_inference_dataloader([path_to_file], path_to_raw, slice_shape)
+    with torch.no_grad(): # Disable gradients
+        for batch in loader:
+            print("batch: ", batch.shape)
+            data = batch[0]
+            prediction = model(data)
+            print("Prediction shape:", prediction.shape)
+            # Only one element
+    # add data to copy of file
     try:
         with h5py.File(path_to_copy, "r+") as f:
-            data = f[path_to_raw][:]
-
-            # Dimensionality check
-            if len(data.shape) == 3:
-                # data.unsqueeze(0)
-                data = np.expand_dims(data, axis=0)  
-                data = np.expand_dims(data, axis=0)  # Shape becomes (1, 1, D, H, W)
-                
-            elif len(data.shape) == 4:
-                data = np.expand_dims(data, axis=0)  
-            elif len != 5:
-                raise ValueError(f"Unexpected data shape: {data.shape}, expected (1, 1, D, H, W)")
-
-            print("Initial: ", data.shape, " type: ", type(data))
-            # Use negative index to handle all data shapes
-
-            if(slice_shape[-1] > data.shape[-1]) or (slice_shape[-3] > data.shape[-3]):
-                add_shape = (
-                    (0,)*2, 
-                    (0,)*2,
-                    (int((slice_shape[-3]-data.shape[-3])/2),)*2, 
-                    (int((slice_shape[-2]-data.shape[-2])/2),)*2, 
-                    (int((slice_shape[-1]-data.shape[-1])/2),)*2, 
-                    )
-                data = np.pad(data, add_shape, mode = "constant", constant_values= 0)
-
-            if data.shape[-3] > slice_shape [-3] or data.shape[-1] > slice_shape [-1]:
-                data = resize(data, (1, 1) + slice_shape, anti_aliasing= True)
-            data_tensor = torch.from_numpy(data).float()  # Convert to PyTorch tensor
-            result = model(data_tensor)
-            # Suppose we get (1, 2, z, y, x)
-            # print("Result: ", result[0][0])
-
-            # TODO: implement same thing with dataloader instead1
-            f.create_dataset("foreground", result[0][0].shape,  np.float32, )
-            f.create_dataset("boundaries", result[0][1].shape,  np.float32, result[0][1].detach().numpy())
-            # f["foreground"] = (result[0][0].detach().numpy() * 255).astype(np.uint8)
-            # f["boundaries"] = (result[0][1].detach().numpy() * 255).astype(np.uint8)
+            # print(f.keys())
+            # Add a deletion of all files but mito and raw?
+            f.create_dataset("foreground", slice_shape, np.uint8, prediction[0][0])
+            f.create_dataset("boundaries", slice_shape, np.uint8, prediction[0][1])
     except Exception as e:
-        print(f"Failed test inference for {path_to_copy}: ", e)
-        if os.path.exists(path_to_copy):
-            os.remove(path_to_copy)
-        raise e
+        print("Failed to test inference: ", e)
 
 def directory_to_path_list(directory) -> list:
     """
@@ -146,9 +122,8 @@ def get_dataloader(paths, data_key, label_key, split, patch_shape, batch_size = 
     return train_loader, val_loader
 
 def get_inference_dataloader(paths, raw_key, patch_shape, batch_size = 1, num_workers = 1):
-    # TODO!
     """
-    Returns a dataloader for inference without labels.
+    Returns a dataloader for inference, for now still with labels.
     Args:
         paths: list of paths to the inference data
         raw_key: key to access raw data in the files (such as "raw_crop" if inside an hdf5 file)
@@ -158,49 +133,18 @@ def get_inference_dataloader(paths, raw_key, patch_shape, batch_size = 1, num_wo
     Returns:
         inference_loader
     """
-    dataset = torch.utils.data.IterableDataset(
-        paths=paths,
-        raw_key=raw_key,
-        patch_shape=patch_shape,
-        ndim=3
+    
+    kwargs = dict(
+        ndim=3, patch_shape=patch_shape, batch_size=batch_size,
+        label_transform=None, label_transform2=None,
+        num_workers = num_workers
     )
-    inference_loader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        shuffle=False
+    # Define loaders
+    inference_loader = torch_em.default_segmentation_loader(
+        paths, raw_key, paths, raw_key,
+        rois = None, with_padding = True, **kwargs
     )
     return inference_loader
-
-
-
-def get_random_colors(labels):
-    n_labels = len(np.unique(labels)) - 1
-    cmap = [[0, 0, 0]] + np.random.rand(n_labels, 3).tolist()
-    cmap = colors.ListedColormap(cmap)
-    return cmap
-
-def plot_samples(image, labels, cmap="gray", view_napari=True):
-    def _get_mpl_plots(image, labels):
-        fig, ax = plt.subplots(1, 2)
-
-        ax[0].imshow(image, cmap=cmap)
-        ax[0].axis("off")
-        ax[0].set_title("Image")
-
-        ax[1].imshow(labels, cmap=get_random_colors(labels), interpolation="nearest")
-        ax[1].axis("off")
-        ax[1].set_title("Labels")
-        plt.show()
-
-    if view_napari:
-    
-        v = napari.Viewer()
-        v.add_image(image)
-        v.add_labels(labels)
-        napari.run()
-    else:
-        _get_mpl_plots(image, labels)
 
 if __name__ == "__main__":
     test_dataloader = get_inference_dataloader(

@@ -13,13 +13,14 @@ from model_utils import *
 
 # Switch between inference and training
 
-is_inference = True
+is_inference = False
+# is_inference = True
 
 #
 # Hyperparameters
 #
 
-model_name = "Anisotropic-3d-UNet"
+model_name = "Anisotropic-3d-UNet-256"
 
 learning_rate = 2.5e-4      # learning rate for the optimizer
 batch_size = 1              # batch size for the dataloader
@@ -27,7 +28,7 @@ epochs = 5000                # number of epochs to train the model for
 iterations_per_epoch = 100 # number of iterations per epoch
 random_seed = 42            # random seed for reproducibility
 classes = ["mito"]          # list of classes to segment
-patch_shape = (128,)*3      # !! To be studied !!
+patch_shape = (256,)*3      # !! To be studied !!
 val_split = 0.1
 num_workers = 2             # Limit number of cpus
 loss_function = torch_em.loss.DiceLoss()
@@ -40,7 +41,6 @@ device = "cuda"             # Device required for training
 
 # Path of the training folder
 data_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/mito_crops/"
-# data_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_crops"
 
 # Path to the checkpoints folder
 save_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/model/"
@@ -50,8 +50,8 @@ inference_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files
 
 # Path to the best version of the model
 # Give none to train from scratch
-# best_path = None
-best_path = f"{save_path}checkpoints/{model_name}/best.pt"
+best_path = None
+# best_path = f"{save_path}checkpoints/{model_name}/best.pt"
 
 # Keys for raw data and for labels
 data_key = "raw_crop"
@@ -116,6 +116,7 @@ trainer = DefaultTrainer(
     device = device,
     save_root = save_path
 )
+
 if __name__ == "__main__":
     if not is_inference:
 
@@ -125,7 +126,7 @@ if __name__ == "__main__":
 
         trainer.fit(
             epochs=epochs,
-            save_every_kth_epoch=5,
+            save_every_kth_epoch=10,
         )
 
     else:
@@ -133,7 +134,7 @@ if __name__ == "__main__":
         #   
         # Test inference
         #
-
+ 
         # for file in os.listdir(inference_path):
         for file in ["crop_118.h5", "crop_141.h5"]:
             check_inference(model, f"{inference_path}{file}")

@@ -9,7 +9,7 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from zarr_utils import zarr_to_h5, export_data
 from skimage.transform import resize, rescale
-from scipy.ndimage import binary_closing, generic_filter, convolve, median_filter
+from scipy.ndimage import label, median_filter
 
 
 # Tried from https://hdmf-zarr.readthedocs.io/en/dev/tutorials/plot_convert_nwb_hdf5.html
@@ -524,64 +524,75 @@ def all_to_mito(path_to_source, path_to_file):
         path_to_file (str): Path where to copy the file
     """
     ids = [3, 4, 5, 50] # IDs that refer to mitochondria
-    with h5py.File(path_to_source, 'r') as f:
-        if "label_crop/mito" in f:
-            # Case mito is there: check if it is empty
-            if np.any(f["label_crop/mito"]):
-                # Case there is something
-                # Skip in any case
-                print("Mito dataset is not empty")
-                shutil.copyfile(path_to_source, path_to_file)
-                return
-            # Case it is empty, check all
-            if "label_crop/all" in f:
-                list_of_ids = np.unique(f["label_crop/all"])
-                if any(x in list_of_ids for x in ids):
-                    # Case there are mitochondria in all and mito is empty
-                    # Create a new mito label with 1 if id in ids, 0 otherwise
-                    new_mito = np.isin(f["label_crop/all"], ids).astype(np.uint8)
+    try:
+        with h5py.File(path_to_source, 'r') as f:
+            if "label_crop/mito" in f:
+                # Case mito is there: check if it is empty
+                if np.any(f["label_crop/mito"]):
+                    # Case there is something
+                    # Skip in any case
+                    print("Mito dataset contains mitochondria")
                     shutil.copyfile(path_to_source, path_to_file)
-                    with h5py.File(path_to_file, 'r+') as f2:
-                        f2["label_crop/mito"] = new_mito
-                    print("Created copy and added mito from all")
                     return
+                # Case it is empty, check all
+                if "label_crop/all" in f:
+                    list_of_ids = np.unique(f["label_crop/all"])
+                    if any(x in list_of_ids for x in ids):
+                        # Case there are mitochondria in all and mito is empty
+                        # Create a new mito label with 1 if id in ids, 0 otherwise
+                        # Create a binary mask
+                        binary_mask = np.isin(f["label_crop/all"], ids).astype(np.uint8)
+                        
+                        # Label connected components in the binary mask
+                        labeled_mask, num_features = label(binary_mask)
+                        
+                        # Assign the labeled mask to new_mito
+                        new_mito = labeled_mask.astype(np.uint8)
+                        shutil.copyfile(path_to_source, path_to_file)
+                        with h5py.File(path_to_file, 'r+') as f2:
+                            del f2["label_crop/mito"]
+                            f2["label_crop/mito"] = new_mito
+                        print("Created copy and added mito from all")
+                        return
+                    else:
+                        # Case mito is empty and there is nothing in all
+                        print("Mito is empty and there is no trace in all")
+                        return
                 else:
-                    # Case mito is empty and there is nothing in all
-                    print("Mito is empty and there is no trace in all")
+                    print("No 'label_crop/all' found. ")
                     return
             else:
-                print("No 'label_crop/all' found. ")
-                return
-        else:
-            # Case mito is not there
-            # same but create 
-            if "label_crop/all" in f:
-                list_of_ids = np.unique(f["label_crop/all"])
-                if any(x in list_of_ids for x in ids):
-                    # Case there are mitochondria
-                    # Create a new mito label with 1 if id in ids, 0 otherwise
-                    new_mito = np.isin(f["label_crop/all"], ids).astype(np.uint8)
-                    print("Copying: ", path_to_source , " to ", path_to_file)
-                    shutil.copyfile(path_to_source, path_to_file)
-                    with h5py.File(path_to_file, 'r+') as f2:
-                        # Different here
-                        f2.create_dataset("label_crop/mito", new_mito.shape, np.uint8, new_mito)
-                    print("Created copy and added mito from all")
-                    return
+                # Case mito is not there
+                # same but create 
+                if "label_crop/all" in f:
+                    list_of_ids = np.unique(f["label_crop/all"])
+                    if any(x in list_of_ids for x in ids):
+                        # Case there are mitochondria
+                        # Create a new mito label with 1 if id in ids, 0 otherwise
+                        new_mito = np.isin(f["label_crop/all"], ids).astype(np.uint8)
+                        print("Copying: ", path_to_source , " to ", path_to_file)
+                        shutil.copyfile(path_to_source, path_to_file)
+                        with h5py.File(path_to_file, 'r+') as f2:
+                            # Different here
+                            f2.create_dataset("label_crop/mito", new_mito.shape, np.uint8, new_mito)
+                        print("Created copy and added mito from all")
+                        return
+                    else:
+                        print("No mito and no mito in all found")
+                        return
                 else:
-                    print("No mito and no mito in all found")
+                    # Case no mito 
+                    print("No 'mito' or 'label_crop/all' found. ")
                     return
-            else:
-                # Case no mito 
-                print("No 'mito' or 'label_crop/all' found. ")
-                return
+    except Exception as e:
+        print("Failed to get labels: ", e)
     print("Something went wrong for ", path_to_file)
 
 
 if __name__ == "__main__":
     print_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/txt/'
     originals_path = '/scratch-grete/projects/nim00007/data/cellmap/data_crops/'
-    dest_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/'
+    dest_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/mito_crops/'
     file_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/'
     blacklist = [
         # Probably corrupted
@@ -597,25 +608,18 @@ if __name__ == "__main__":
 
 
     # Test all to mito
+
     # for file, _ in zip(os.listdir(dest_path), range(50)):
-    for file in os.listdir(dest_path):
-        print("Checking ", file)
-        all_to_mito(f"{dest_path}{file}", f"{file_path}test_created_crops/{file}")
+    # for file in os.listdir(dest_path):
+    # for file in ["crop_211.h5"]:
+    #     print("Checking ", file)
+    #     all_to_mito(f"{dest_path}{file}", f"{file_path}test_created_crops/{file}")
 
     # for file in os.listdir(dest_path):
     #     print("Checking ", file)
     #     check_dataset_empty(f"{dest_path}{file}", copy_path = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/mito_crops/{file}")
     
-    # count_no_mito = 0
-    # count = 0
-    # for file in os.listdir(dest_path):
-    # # for file in ["crop_211.h5"]:
-    #     print(file)
-    #     if check_dataset_empty(f"{dest_path}{file}"):
-    #         count += 1
-    #         # print("Wrong: " + file)
 
-    # print("Samples with no mito: ", count_no_mito)
     # start = time.time()
     # # On the fly parallelization
     # # numbers = ["0", "1"]
@@ -634,12 +638,6 @@ if __name__ == "__main__":
     # print("Getting files took " + str((end-start)) + "s.")
     
 
-
-    # for file in ["crop_357.h5", "crop_289.h5", "crop_349.h5", "crop_358.h5", "crop_367.h5" ]:
-    #     print("Upsampling " + file)
-    #     resize_to_target(f"{originals_path}{file}", f"{dest_path}{file}", 8)
-    #     file_check(f"{dest_path}{file}")
-    
     # Check all files
-    # for file in os.listdir(dest_path):
-    #     file_check(f"{dest_path}{file}")
+    for file in os.listdir(dest_path):
+        file_check(f"{dest_path}{file}")
