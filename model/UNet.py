@@ -1,35 +1,26 @@
-import numpy as np
-import torch.nn as nn
 import torch_em
 import os
-import torch
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.optim import RAdam
-from torch_em.model import AnisotropicUNet, get_vision_transformer
+from torch_em.model import AnisotropicUNet
 from torch_em.trainer import DefaultTrainer
 from torch_em.util import load_model
-from sklearn.model_selection import train_test_split
 from model_utils import *
-
-# Switch between inference and training
-
-is_inference = False
-# is_inference = True
 
 #
 # Hyperparameters
 #
 
-model_name = "Anisotropic-3d-UNet-256"
+model_name = "Anisotropic-3d-UNet-128-1"
+# name-patch_shape-batch_size
 
-learning_rate = 2.5e-4      # learning rate for the optimizer
+learning_rate = 5.0e-4      # learning rate for the optimizer
 batch_size = 1              # batch size for the dataloader
-epochs = 5000                # number of epochs to train the model for
-iterations_per_epoch = 100 # number of iterations per epoch
+epochs = 5000               # number of epochs to train the model for
 random_seed = 42            # random seed for reproducibility
 classes = ["mito"]          # list of classes to segment
-patch_shape = (256,)*3      # !! To be studied !!
-val_split = 0.1
+patch_shape = (128,)*3      # Patch shape - modified in various runs
+val_split = 0.1             # Fraction of the data to use for validation
 num_workers = 2             # Limit number of cpus
 loss_function = torch_em.loss.DiceLoss()
 metric_function = torch_em.loss.DiceLoss()
@@ -51,7 +42,7 @@ inference_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files
 # Path to the best version of the model
 # Give none to train from scratch
 best_path = None
-# best_path = f"{save_path}checkpoints/{model_name}/best.pt"
+best_path = f"{save_path}checkpoints/{model_name}/best.pt"
 
 # Keys for raw data and for labels
 data_key = "raw_crop"
@@ -118,23 +109,14 @@ trainer = DefaultTrainer(
 )
 
 if __name__ == "__main__":
-    if not is_inference:
 
-        #
-        # Train
-        #
+    #
+    # Train
+    #
 
-        trainer.fit(
-            epochs=epochs,
-            save_every_kth_epoch=10,
-        )
+    print(f"Training {model_name} for {epochs} epochs with a lr of {learning_rate}, batch size of {batch_size} and patch shape of {patch_shape}")
 
-    else:
-
-        #   
-        # Test inference
-        #
- 
-        # for file in os.listdir(inference_path):
-        for file in ["crop_118.h5", "crop_141.h5"]:
-            check_inference(model, f"{inference_path}{file}")
+    trainer.fit(
+        epochs=epochs,
+        save_every_kth_epoch=10,
+    )

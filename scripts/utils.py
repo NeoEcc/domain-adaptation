@@ -365,9 +365,15 @@ def resize_to_target(path_to_source, path_to_file, target_size = 8):
                 downscaling = 0
                 return
             elif voxel_size < target_size: 
+                # Case downsampling
                 downscaling = get_best_size(voxel_size, target_size)
             elif voxel_size > target_size and voxel_size <= 2*target_size:
+                # Case upsampling once (16x)
                 downscaling = -1
+                upsampled_path = f"{os.path.splitext(path_to_file)[0]}_upsampled{os.path.splitext(path_to_file)[1]}"
+            elif voxel_size > 2*target_size and voxel_size <= 4*target_size:
+                # Case upsampling twice (32x)
+                downscaling = -2
                 upsampled_path = f"{os.path.splitext(path_to_file)[0]}_upsampled{os.path.splitext(path_to_file)[1]}"
             else:
                 print("Voxel size not supported: " + str(voxel_size) + " for " + file_name)
@@ -391,10 +397,12 @@ def resize_to_target(path_to_source, path_to_file, target_size = 8):
                             obj.resize(downsampled_data.shape)  # Resize the dataset to match the downsampled data
                             obj[...] = downsampled_data
                         else:
-                            downsampled_data = scale_input(3*(filter_size,), data, is_segmentation=True)
-                            # rescale, resize
-                            obj.resize(downsampled_data.shape)  # Resize the dataset to match the downsampled data
-                            obj[...] = downsampled_data
+                            if name == "label_crop/mito":
+                                # Only consider the case mito
+                                downsampled_data = scale_input(3*(filter_size,), data, is_segmentation=True)
+                                # rescale, resize
+                                obj.resize(downsampled_data.shape)  # Resize the dataset to match the downsampled data
+                                obj[...] = downsampled_data
                     elif downscaling < 0:
                         # Simpl save everythin to the dictionary
                         items_dict[name] = data
@@ -594,16 +602,10 @@ if __name__ == "__main__":
     originals_path = '/scratch-grete/projects/nim00007/data/cellmap/data_crops/'
     dest_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/mito_crops/'
     file_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/'
+    test_path = f"{file_path}test_crops/"
     blacklist = [
         # Probably corrupted
-        "crop_247.h5", 
-        # Lack of mitochondria
-        "crop_421.h5", "crop_379.h5", "crop_472.h5", "crop_366.h5", "crop_337.h5",  
-        "crop_254.h5", "crop_411.h5", "crop_102.h5", "crop_351.h5", "crop_410.h5", "crop_257.h5",
-        # Massive, would require a 2000, 4000, 12000 array or 715GB of memory (first), 2000, 4000, 4000 the second
-        "crop_282.h5", "crop_336.h5", "crop_337.h5"
-        # Just really big, over 1000x1000x1000 native that would require > 200 GB
-        "crop_357.h5", "crop_289.h5", "crop_349.h5", "crop_358.h5", "crop_367.h5" 
+        "crop_247.h5",
         ]
 
 
@@ -638,6 +640,6 @@ if __name__ == "__main__":
     # print("Getting files took " + str((end-start)) + "s.")
     
 
-    # Check all files
-    for file in os.listdir(dest_path):
-        file_check(f"{dest_path}{file}")
+    # # Check all files
+    # for file in os.listdir(dest_path):
+    #     file_check(f"{dest_path}{file}")

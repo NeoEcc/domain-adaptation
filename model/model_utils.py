@@ -1,17 +1,11 @@
 import h5py
 import numpy as np
-from glob import glob
-import napari
 import os
 import torch_em
 import torch
 
 from torch_em.data.sampler import MinInstanceSampler
-import imageio.v3 as imageio
-from matplotlib import colors
-import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
-from skimage.transform import resize
 from shutil import copyfile
 
 
@@ -41,22 +35,25 @@ def check_inference(model, path_to_file, slice_shape = (128,)*3, path_to_raw = "
     # Prepare for inference and get data
     model.eval()
     loader = get_inference_dataloader([path_to_file], path_to_raw, slice_shape)
-    with torch.no_grad(): # Disable gradients
-        for batch in loader:
-            print("batch: ", batch.shape)
-            data = batch[0]
-            prediction = model(data)
-            print("Prediction shape:", prediction.shape)
-            # Only one element
-    # add data to copy of file
+    prediction = []
     try:
+        with torch.no_grad(): # Disable gradients
+            for batch in loader:
+                print("No problemo")
+                data = batch[0]
+                prediction.append(model(data))
+                # Only one element
+        # add data to copy of file
         with h5py.File(path_to_copy, "r+") as f:
             # print(f.keys())
             # Add a deletion of all files but mito and raw?
-            f.create_dataset("foreground", slice_shape, np.uint8, prediction[0][0])
-            f.create_dataset("boundaries", slice_shape, np.uint8, prediction[0][1])
+            for x in range(len(prediction)):
+                f.create_dataset("foreground", slice_shape, np.uint8, prediction[x][0][0])
+                f.create_dataset("boundaries", slice_shape, np.uint8, prediction[x][0][1])
     except Exception as e:
         print("Failed to test inference: ", e)
+        if os.path.exists(path_to_copy):
+            os.remove(path_to_copy)
 
 def directory_to_path_list(directory) -> list:
     """
@@ -115,7 +112,7 @@ def get_dataloader(paths, data_key, label_key, split, patch_shape, batch_size = 
         rois = None, sampler = sampler, with_padding = True, **kwargs
     )
     val_loader = torch_em.default_segmentation_loader(
-        val_data_paths, data_key, val_label_paths, label_key,
+        val_data_paths, data_key, val_label_paths, label_key, #raw_transform=
         rois = None, sampler = sampler, with_padding= True,  **kwargs
     )
     
