@@ -608,6 +608,10 @@ if __name__ == "__main__":
         "crop_247.h5",
         ]
 
+    for file in os.listdir(dest_path):
+        file_check(f"{dest_path}{file   }")
+
+
 
     # Test all to mito
 
@@ -638,8 +642,3 @@ if __name__ == "__main__":
     #         future.result()
     # end = time.time()
     # print("Getting files took " + str((end-start)) + "s.")
-    
-
-    # # Check all files
-    # for file in os.listdir(dest_path):
-    #     file_check(f"{dest_path}{file}")

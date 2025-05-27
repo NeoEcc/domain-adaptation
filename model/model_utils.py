@@ -5,55 +5,86 @@ import torch_em
 import torch
 
 from torch_em.data.sampler import MinInstanceSampler
+from torch_em.util import prediction
 from sklearn.model_selection import train_test_split
 from shutil import copyfile
 
 
-def check_inference(model, path_to_file, slice_shape = (128,)*3, path_to_raw = "raw_crop"):
+def check_inference(model, path_to_file, path_to_dest, original_shape = (128,)*3, block_size = (96,)*3, halo = (16,)*3, 
+                    raw_key = "raw_crop", test_function = None, label_key = "labels/mito"):
     """
     Perform inference using a given model on data from an HDF5 file and save the results 
     to a new HDF5 file appending the inference results (e.g., "foreground" and "boundaries")
-     to the new file.
+    to the new file.
+    If the test function and label key is given, it returns the test metric.
     Args:
         model (torch.nn.Module): The PyTorch model to use for inference
         path_to_file (str): Path to the input HDF5 file.
-        slice_shape (tuple of int, optional): The shape of the slices to be used for inference. 
-            Defaults to (128, 128, 128).
-        path_to_raw (str, optional): The key in the HDF5 file that contains the raw data 
+        path_to_dest (str): Path to where the final file will be created
+        original_shape: (tuple of int, optional): The shape of the slices the model has beeen trained on
+        block_size (tuple of int, optional): The shape of the block to be used for inference. 
+            Defaults to (96, 96, 96). Must be smaller than the model's slice shape.
+        halo_size (tuple of int, optional): The shape of the halo to be used in each side of the block
+            during inference. Defaults to (96, 96, 96). 
+        raw_key (str, optional): The key in the HDF5 file that contains the raw data 
             to be used for inference. Defaults to "raw_crop".
+        test_function (function, optional): function that calculates loss
+        label_key (str, optional): key to reach the labels in the file; used only with test_function
     """
-    print("Checking inference for ", path_to_file)
+
     # Copy the file, do checks on the extension
-    if ".h5" in path_to_file: 
-        path_to_copy = path_to_file.replace(".h5", "_inference.h5")
-    elif ".hdf5" in path_to_file:
-        path_to_copy = path_to_file.replace(".hdf5", "_inference.hdf5")
-    else:
+    if ".h5" not in path_to_file and ".hdf5" not in path_to_file:
         raise ValueError("Passed file must be HDF5 (.h5 or .hdf5), got " + path_to_file)
-    copyfile(path_to_file, path_to_copy)
+    if os.path.exists(path_to_dest):
+        raise ValueError("Passed path to a file that already exists: ", path_to_dest)
     
     # Prepare for inference and get data
     model.eval()
-    loader = get_inference_dataloader([path_to_file], path_to_raw, slice_shape)
-    prediction = []
+    test_val = None
     try:
-        with torch.no_grad(): # Disable gradients
-            for batch in loader:
-                print("No problemo")
-                data = batch[0]
-                prediction.append(model(data))
-                # Only one element
-        # add data to copy of file
-        with h5py.File(path_to_copy, "r+") as f:
-            # print(f.keys())
-            # Add a deletion of all files but mito and raw?
-            for x in range(len(prediction)):
-                f.create_dataset("foreground", slice_shape, np.uint8, prediction[x][0][0])
-                f.create_dataset("boundaries", slice_shape, np.uint8, prediction[x][0][1])
+        copyfile(path_to_file, path_to_dest)
+        with h5py.File(path_to_file, 'r') as f:
+            original_crop = f[raw_key]
+            if test_function is not None:
+                label_crop = f[label_key]
+            # If the crop is smaller than the original shape, do not use halo
+            is_smaller = all(a <= b for a, b in zip(original_crop.shape, original_shape))
+            if is_smaller:
+                block_size = original_shape
+                halo = (0,)*3
+
+    except Exception as e:
+        print(f"Failed to read original crop ({path_to_file}): ", e)
+        if os.path.exists(path_to_dest):
+            os.remove(path_to_dest)
+
+    try:
+        # Determine the current device: use GPU if available, else CPU
+        if torch.cuda.is_available():
+            gpu_ids = [torch.cuda.current_device()]
+        else:
+            gpu_ids = ["cpu"]
+        item = prediction.predict_with_halo(
+            original_crop,
+            model,
+            gpu_ids,
+            block_size,
+            halo,
+            preprocess=minmax_norm
+        )
+        if test_function is not None:
+            test_val = test_function(original_crop, label_crop)
+
+        print("Predicted item: ", item.shape)
+        with h5py.File(path_to_dest, 'r+') as f2:
+            f2.create_dataset("foreground", item[0].shape, np.float32, item[0])
+            f2.create_dataset("boundary", item[0].shape, np.float32, item[1])
+        return test_val
+
     except Exception as e:
         print("Failed to test inference: ", e)
-        if os.path.exists(path_to_copy):
-            os.remove(path_to_copy)
+        if os.path.exists(path_to_dest):
+            os.remove(path_to_dest)
 
 def directory_to_path_list(directory) -> list:
     """
@@ -108,15 +139,22 @@ def get_dataloader(paths, data_key, label_key, split, patch_shape, batch_size = 
     )
     # Define loaders
     train_loader = torch_em.default_segmentation_loader(
-        train_data_paths, data_key, train_label_paths, label_key,
+        train_data_paths, data_key, train_label_paths, label_key, raw_transform=minmax_norm,
         rois = None, sampler = sampler, with_padding = True, **kwargs
     )
     val_loader = torch_em.default_segmentation_loader(
-        val_data_paths, data_key, val_label_paths, label_key, #raw_transform=
+        val_data_paths, data_key, val_label_paths, label_key, raw_transform=minmax_norm,
         rois = None, sampler = sampler, with_padding= True,  **kwargs
     )
     
     return train_loader, val_loader
+
+def minmax_norm(x):
+    """
+    MinMax normalization for each instance of the sample
+    """
+    x = x.astype(np.float32)
+    return (x - x.min()) / (x.max() - x.min() + 1e-8)
 
 def get_inference_dataloader(paths, raw_key, patch_shape, batch_size = 1, num_workers = 1):
     """
@@ -150,3 +188,52 @@ if __name__ == "__main__":
         (128,)*3,
         )
     print(test_dataloader)
+
+
+
+# # Deprecated
+# def check_inference(model, path_to_file, slice_shape = (128,)*3, path_to_raw = "raw_crop"):
+# """
+# Perform inference using a given model on data from an HDF5 file and save the results 
+# to a new HDF5 file appending the inference results (e.g., "foreground" and "boundaries")
+#     to the new file.
+# Args:
+#     model (torch.nn.Module): The PyTorch model to use for inference
+#     path_to_file (str): Path to the input HDF5 file.
+#     slice_shape (tuple of int, optional): The shape of the slices to be used for inference. 
+#         Defaults to (128, 128, 128).
+#     path_to_raw (str, optional): The key in the HDF5 file that contains the raw data 
+#         to be used for inference. Defaults to "raw_crop".
+# """
+# print("Checking inference for ", path_to_file)
+# # Copy the file, do checks on the extension
+# if ".h5" in path_to_file: 
+#     path_to_copy = path_to_file.replace(".h5", "_inference.h5")
+# elif ".hdf5" in path_to_file:
+#     path_to_copy = path_to_file.replace(".hdf5", "_inference.hdf5")
+# else:
+#     raise ValueError("Passed file must be HDF5 (.h5 or .hdf5), got " + path_to_file)
+# copyfile(path_to_file, path_to_copy)
+
+# # Prepare for inference and get data
+# model.eval()
+# loader = get_inference_dataloader([path_to_file], path_to_raw, slice_shape)
+# prediction = []
+# try:
+#     with torch.no_grad(): # Disable gradients
+#         for batch in loader:
+#             print("No problemo")
+#             data = batch[0]
+#             prediction.append(model(data))
+#             # Only one element
+#     # add data to copy of file
+#     with h5py.File(path_to_copy, "r+") as f:
+#         # print(f.keys())
+#         # Add a deletion of all files but mito and raw?
+#         for x in range(len(prediction)):
+#             f.create_dataset("foreground", slice_shape, np.uint8, prediction[x][0][0])
+#             f.create_dataset("boundaries", slice_shape, np.uint8, prediction[x][0][1])
+# except Exception as e:
+#     print("Failed to test inference: ", e)
+#     if os.path.exists(path_to_copy):
+#         os.remove(path_to_copy)

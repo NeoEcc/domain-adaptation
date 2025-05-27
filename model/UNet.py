@@ -14,7 +14,7 @@ from model_utils import *
 model_name = "Anisotropic-3d-UNet-128-1"
 # name-patch_shape-batch_size
 
-learning_rate = 5.0e-4      # learning rate for the optimizer
+learning_rate = 1.0e-4      # learning rate for the optimizer
 batch_size = 1              # batch size for the dataloader
 epochs = 5000               # number of epochs to train the model for
 random_seed = 42            # random seed for reproducibility
@@ -118,5 +118,5 @@ if __name__ == "__main__":
 
     trainer.fit(
         epochs=epochs,
-        save_every_kth_epoch=10,
+        save_every_kth_epoch=20,
     )

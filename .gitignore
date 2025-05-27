@@ -2,6 +2,7 @@ files/*
 !files/README.md
 scripts/__pycache__
 model/__pycache__
+model/saves
 txt
 .vscode
 logs
