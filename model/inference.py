@@ -6,8 +6,8 @@ from UNet import model
 
 model_name = "Anisotropic-3d-UNet-128-1"
 data_key = "raw_crop"
-block_size = (96,)*3
-halo = (16,)*3
+block_size = (100,)*3
+halo = (14,)*3
 
 
 # Path to the samples to test for inference

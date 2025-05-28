@@ -6,8 +6,10 @@ import torch
 
 from torch_em.data.sampler import MinInstanceSampler
 from torch_em.util import prediction
+from torch_em.loss.dice import dice_score
 from sklearn.model_selection import train_test_split
 from shutil import copyfile
+from torchmetrics import JaccardIndex 
 
 
 def check_inference(model, path_to_file, path_to_dest, original_shape = (128,)*3, block_size = (96,)*3, halo = (16,)*3, 
@@ -181,59 +183,52 @@ def get_inference_dataloader(paths, raw_key, patch_shape, batch_size = 1, num_wo
     )
     return inference_loader
 
+def test_inference_loss(path_to_folder, label_key = "label_crop/mito", foreground_key = "foreground", average = True):
+    """
+    Calculate the total or average loss over all files in a specified folder using IoU and dice loss.
+    Args:
+        path_to_folder (str): Path to the folder containing the data files to evaluate.
+        label_key (str, optional): Key to access the label data in each file. Defaults to "label_crop/mito".
+        foreground_key (str, optional): Key to access the prediction data in each file. Defaults to "foreground".
+        average (bool, optional): If True, returns the average loss over all files; otherwise, returns the total loss. Defaults to True.
+    Returns:
+        float: The average or total loss computed over all files in the folder.
+    """
+    # Input checks
+    if not os.path.exists(path_to_folder):
+        raise ValueError("Path does not exist: ", path_to_folder)
+    jaccard_metric = JaccardIndex(task="binary")
+
+    items = directory_to_path_list(path_to_folder)
+    iou_score = 0
+    dice_score = 0
+    for item in items:
+        with h5py.File(item, "r") as f:
+            prediction_arr = np.array(f[foreground_key])
+            label_arr = np.array(f[label_key])
+            # Binarize 
+            pred_tensor = torch.from_numpy(prediction_arr).float()
+            label_tensor = torch.from_numpy(label_arr).float()
+            pred_tensor = (pred_tensor > 0.5).int()
+            label_tensor = (label_tensor > 0.5).int()
+            # Flatten
+            pred_tensor_flat = pred_tensor.view(-1)
+            label_tensor_flat = label_tensor.view(-1)
+            # IoU
+            i_score = jaccard_metric(pred_tensor_flat, label_tensor_flat).item()
+            # Dice loss: 1 - (2 * intersection / (sum of sizes))
+            intersection = (pred_tensor_flat * label_tensor_flat).sum().item()
+            total = pred_tensor_flat.sum().item() + label_tensor_flat.sum().item()
+            d_score = (2.0 * intersection / (total + 1e-8))
+
+            iou_score += i_score
+            dice_score += d_score
+            print("Predicted ", os.path.basename(item), f"- IoU: {i_score}, dice: {d_score}")
+    if average:
+        return (iou_score / len(items), dice_score / len(items))
+    return (iou_score, dice_score)
+
 if __name__ == "__main__":
-    test_dataloader = get_inference_dataloader(
-        ["/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/crops/crop_3.h5"],
-        "raw_crop",
-        (128,)*3,
-        )
-    print(test_dataloader)
-
-
-
-# # Deprecated
-# def check_inference(model, path_to_file, slice_shape = (128,)*3, path_to_raw = "raw_crop"):
-# """
-# Perform inference using a given model on data from an HDF5 file and save the results 
-# to a new HDF5 file appending the inference results (e.g., "foreground" and "boundaries")
-#     to the new file.
-# Args:
-#     model (torch.nn.Module): The PyTorch model to use for inference
-#     path_to_file (str): Path to the input HDF5 file.
-#     slice_shape (tuple of int, optional): The shape of the slices to be used for inference. 
-#         Defaults to (128, 128, 128).
-#     path_to_raw (str, optional): The key in the HDF5 file that contains the raw data 
-#         to be used for inference. Defaults to "raw_crop".
-# """
-# print("Checking inference for ", path_to_file)
-# # Copy the file, do checks on the extension
-# if ".h5" in path_to_file: 
-#     path_to_copy = path_to_file.replace(".h5", "_inference.h5")
-# elif ".hdf5" in path_to_file:
-#     path_to_copy = path_to_file.replace(".hdf5", "_inference.hdf5")
-# else:
-#     raise ValueError("Passed file must be HDF5 (.h5 or .hdf5), got " + path_to_file)
-# copyfile(path_to_file, path_to_copy)
-
-# # Prepare for inference and get data
-# model.eval()
-# loader = get_inference_dataloader([path_to_file], path_to_raw, slice_shape)
-# prediction = []
-# try:
-#     with torch.no_grad(): # Disable gradients
-#         for batch in loader:
-#             print("No problemo")
-#             data = batch[0]
-#             prediction.append(model(data))
-#             # Only one element
-#     # add data to copy of file
-#     with h5py.File(path_to_copy, "r+") as f:
-#         # print(f.keys())
-#         # Add a deletion of all files but mito and raw?
-#         for x in range(len(prediction)):
-#             f.create_dataset("foreground", slice_shape, np.uint8, prediction[x][0][0])
-#             f.create_dataset("boundaries", slice_shape, np.uint8, prediction[x][0][1])
-# except Exception as e:
-#     print("Failed to test inference: ", e)
-#     if os.path.exists(path_to_copy):
-#         os.remove(path_to_copy)
+    test_folder = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_inference"
+    x = test_inference_loss(test_folder)
+    print(f"IoU: {x[0]}, dice: {x[1]}")
