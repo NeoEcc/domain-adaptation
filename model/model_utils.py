@@ -77,7 +77,7 @@ def check_inference(model, path_to_file, path_to_dest, original_shape = (128,)*3
         if test_function is not None:
             test_val = test_function(original_crop, label_crop)
 
-        print("Predicted item: ", item.shape)
+        # print("Predicted item: ", item.shape)
         with h5py.File(path_to_dest, 'r+') as f2:
             f2.create_dataset("foreground", item[0].shape, np.float32, item[0])
             f2.create_dataset("boundary", item[0].shape, np.float32, item[1])

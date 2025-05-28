@@ -1,18 +1,21 @@
 import os
 
 from torch_em.util import load_model
-from model_utils import check_inference
+from model_utils import check_inference, test_inference_loss
 from UNet import model
 
 model_name = "Anisotropic-3d-UNet-128-1"
+# Keys for raw data and for labels
 data_key = "raw_crop"
+label_key = "label_crop/mito"
 block_size = (100,)*3
 halo = (14,)*3
 
 
-# Path to the samples to test for inference
+# Path to the the folder with samples to test for inference
 inference_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_crops_copy/"
 
+# Path to the folder where tostore the files modified for inference
 save_inference_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_inference/"
 
 # Path to the checkpoints folder
@@ -39,7 +42,13 @@ if __name__ == "__main__":
     # Run inference
     #
 
+    # Run inference on test files
     for file, _ in zip(os.listdir(inference_path), range(10)):
-        from UNet import loss_function
         print("Checking inference for ", file)
-        loss = check_inference(model, f"{inference_path}{file}", f"{save_inference_path}{file}", test_function=loss_function)
+        check_inference(
+            model, f"{inference_path}{file}", f"{save_inference_path}{file}", 
+            raw_key = data_key, label_key = label_key
+            )
+    # Check test loss
+    x = test_inference_loss(save_inference_path, label_key = label_key, average = True)
+    print(f"IoU: {x[0]}, dice: {x[1]}")

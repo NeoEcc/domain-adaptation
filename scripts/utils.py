@@ -30,13 +30,12 @@ def get_best_size(voxel_size, target_size, tollerance = 0.4) -> int:
         compression += 1
         voxel_size *= 2.0
 
-    # print(f"Best compression for {voxel_list} with tollerance of {tollerance}: {compression}, equivalent to {x*pow(2, compression)} nm")
     return compression
 
 def download_folder(bucket, folder_path, download_path):
     """
     Downloads the folder from the folder_path in the bucket to the download_path.
-    Required for parallelization
+    Required for parallelization, not to be used as-is.
     """
     try:    # Differentiate between folders and files
         name = os.path.basename(folder_path)
@@ -53,7 +52,7 @@ def read_folder(bucket, path, download_path, folders_to_ignore, name):
     - otherwise, add all folders to folders_to_explore except those in folders_to_ignore
     return the tuple with the two lists.
     
-    Required for parallelization
+    Required for parallelization, not to be used as-is.
     """
     folders_to_explore = []
     folders_to_download = []
@@ -78,7 +77,6 @@ def read_folder(bucket, path, download_path, folders_to_ignore, name):
         target = f"{path}{name}/"
         # If the target is there, add it to the list; 
         # Proceed  only otherwise, not to explore other s_ folders
-        # print("Looking for " + target + " in " + path + ", with elements:" + str(folders)) 
         if target in folders:
             # print("Found " + name + f" folder at {path}.")
             folders_to_download.append((target, os.path.join(download_path, name)))
@@ -598,7 +596,6 @@ def all_to_mito(path_to_source, path_to_file):
 
 
 if __name__ == "__main__":
-    print_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/txt/'
     originals_path = '/scratch-grete/projects/nim00007/data/cellmap/data_crops/'
     dest_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/mito_crops/'
     file_path = '/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/'
@@ -609,36 +606,18 @@ if __name__ == "__main__":
         ]
 
     for file in os.listdir(dest_path):
-        file_check(f"{dest_path}{file   }")
+        file_check(f"{dest_path}{file}")
 
+    # Testing resizing function
+    start = time.time()
+    def process_file(file):
+        if file not in blacklist:
+            print("Processing ", file)
+            resize_to_target(f"{originals_path}{file}", f"{dest_path}{file}", 8)
 
-
-    # Test all to mito
-
-    # for file, _ in zip(os.listdir(dest_path), range(50)):
-    # for file in os.listdir(dest_path):
-    # for file in ["crop_211.h5"]:
-    #     print("Checking ", file)
-    #     all_to_mito(f"{dest_path}{file}", f"{file_path}test_created_crops/{file}")
-
-    # for file in os.listdir(dest_path):
-    #     print("Checking ", file)
-    #     check_dataset_empty(f"{dest_path}{file}", copy_path = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/mito_crops/{file}")
-    
-
-    # start = time.time()
-    # # On the fly parallelization
-    # # numbers = ["0", "1"]
-    # numbers = ["2", "3", "4", "5", "6", "7", "8", "9"]
-    # def process_file(file):
-    #  # Only process 1/10 at a time per number if a list is provided, otherwise all
-    #     if file not in blacklist and (file[-4] in numbers or numbers is None):
-    #         print("Processing ", file)
-    #         resize_to_target(f"{originals_path}{file}", f"{dest_path}{file}", 8)
-
-    # with ThreadPoolExecutor(max_workers = 64) as executor:
-    #     futures = [executor.submit(process_file, file) for file in os.listdir(originals_path)] 
-    #     for future in as_completed(futures):
-    #         future.result()
-    # end = time.time()
-    # print("Getting files took " + str((end-start)) + "s.")
+    with ThreadPoolExecutor(max_workers = 64) as executor:
+        futures = [executor.submit(process_file, file) for file in os.listdir(originals_path)] 
+        for future in as_completed(futures):
+            future.result()
+    end = time.time()
+    print("Getting files took " + str((end-start)) + "s.")

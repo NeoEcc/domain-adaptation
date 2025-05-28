@@ -11,8 +11,6 @@ import quilt3 as q3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
-# Some functions taken from
-# https://github.com/lufre1/synapse/blob/main/synapse/io/util.py
 
 def read_data(path):
     """
@@ -36,7 +34,10 @@ def read_data(path):
     recursive_read(root)
     return data
 
+
 def export_data(export_path: str, data):
+# Taken from
+# https://github.com/lufre1/synapse/blob/main/synapse/io/util.py
     """Export data to the specified path, determining format from the file extension.
     
     Args:
@@ -137,7 +138,8 @@ def read_folder_h5(f, current_path, folders_to_ignore, names):
 
 def save_folder(f, current_path):
     """
-    Saves a folder to the data dictionary, or recursively open a folder until a dataset is found
+    Saves a folder to the data dictionary, or recursively open a folder until a dataset is found.
+    Used for parallelization.
     """
     data = {}
     # Read the data
@@ -320,18 +322,3 @@ def read_zattrs(folder_path, bucket_str):
             json.dump(all_data, outfile)
     except:
         print("Failed to write file")
-
-if __name__ == "__main__":
-    names = [
-        "jrc_hela-2",             # 70 GB   # 12 GB after only 8nm # 36GB in h5??
-        "jrc_macrophage-2",       # 96 GB   # 15 GB     # 39GB
-        "jrc_jurkat-1",           # 123 GB  # 20 GB     # 44GB
-        "jrc_hela-3",             # 133 GB  # 18 GB     # 32GB
-        "jrc_ctl-id8-1",          # 235 GB  # ?         # 86GB
-    ]
-    path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/datasets/"
-    test_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/datasets/test.h5"
-
-    for name in names:
-        filter_h5_content(path + name + ".h5")
-    # zarr_to_h5(path, delete=False)
