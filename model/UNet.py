@@ -11,7 +11,8 @@ from model_utils import *
 # Hyperparameters
 #
 
-model_name = "Anisotropic-3d-UNet-128-1"
+# Model name - leave None for automatic
+model_name = None
 # name-patch_shape-batch_size
 
 learning_rate = 1.0e-4      # learning rate for the optimizer
@@ -19,13 +20,15 @@ batch_size = 1              # batch size for the dataloader
 epochs = 5000               # number of epochs to train the model for
 random_seed = 42            # random seed for reproducibility
 classes = ["mito"]          # list of classes to segment
-patch_shape = (128,)*3      # Patch shape - modified in various runs
+patch_shape = (256,)*3      # Patch shape - modified in various runs
 val_split = 0.1             # Fraction of the data to use for validation
 num_workers = 2             # Limit number of cpus
 loss_function = torch_em.loss.DiceLoss()
 metric_function = torch_em.loss.DiceLoss()
 device = "cuda"             # Device required for training
 
+if model_name is None:
+    model_name = f"Anisotropic-3d-UNet-{patch_shape[0]}-{batch_size}"
 #
 # Paths
 #
@@ -41,7 +44,7 @@ inference_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files
 
 # Path to the best version of the model
 # Give none to train from scratch
-best_path = None
+# best_path = None
 best_path = f"{save_path}checkpoints/{model_name}/best.pt"
 
 # Keys for raw data and for labels

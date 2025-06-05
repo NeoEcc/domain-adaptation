@@ -1,4 +1,5 @@
-from utils import get_filtered_from_bucket
+import quilt3 as q3
+from utils import get_filtered_from_bucket, get_folder_parallel
 
 if __name__ == "__main__":
     # Hardcoded list of all datasets available with mitochondria
@@ -51,4 +52,23 @@ if __name__ == "__main__":
     bucket_str = "s3://janelia-cosem-datasets"
     folder_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/"
 
-    get_filtered_from_bucket(names_with_labels, folder_path, bucket_str, max_threads=64)
+    # get_filtered_from_bucket(names_with_labels, folder_path, bucket_str, max_threads=64)
+
+    b = q3.Bucket("s3://janelia-cosem-datasets")
+    folders_to_ignore = [
+        "cell_seg",
+        "cent_seg",
+        "er_seg",
+        "golgi_seg",
+        "lyso_seg",
+        "nucleus_seg",
+    ]
+    # b.fetch("jrc_ctl-id8-2/jrc_ctl-id8-2.zarr/", "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/example_dataset/jrc_ctl-id8-2.zarr/")
+    get_folder_parallel(
+        b, 
+        "jrc_ctl-id8-2/jrc_ctl-id8-2.zarr/", 
+        "/user/niccolo.eccel/u15001/example_dataset/jrc_ctl-id8-2.zarr/", 
+        "s0", 
+        16, 
+        folders_to_ignore, 
+    )

@@ -46,9 +46,9 @@ def check_inference(model, path_to_file, path_to_dest, original_shape = (128,)*3
     try:
         copyfile(path_to_file, path_to_dest)
         with h5py.File(path_to_file, 'r') as f:
-            original_crop = f[raw_key]
+            original_crop = f[raw_key][:]
             if test_function is not None:
-                label_crop = f[label_key]
+                label_crop = f[label_key][:]
             # If the crop is smaller than the original shape, do not use halo
             is_smaller = all(a <= b for a, b in zip(original_crop.shape, original_shape))
             if is_smaller:
@@ -157,31 +157,6 @@ def minmax_norm(x):
     """
     x = x.astype(np.float32)
     return (x - x.min()) / (x.max() - x.min() + 1e-8)
-
-def get_inference_dataloader(paths, raw_key, patch_shape, batch_size = 1, num_workers = 1):
-    """
-    Returns a dataloader for inference, for now still with labels.
-    Args:
-        paths: list of paths to the inference data
-        raw_key: key to access raw data in the files (such as "raw_crop" if inside an hdf5 file)
-        patch_shape: tuple representing the size of each patch
-        batch_size: number of items used in every batch
-        num_workers: number of workers for data loading
-    Returns:
-        inference_loader
-    """
-    
-    kwargs = dict(
-        ndim=3, patch_shape=patch_shape, batch_size=batch_size,
-        label_transform=None, label_transform2=None,
-        num_workers = num_workers
-    )
-    # Define loaders
-    inference_loader = torch_em.default_segmentation_loader(
-        paths, raw_key, paths, raw_key,
-        rois = None, with_padding = True, **kwargs
-    )
-    return inference_loader
 
 def test_inference_loss(path_to_folder, label_key = "label_crop/mito", foreground_key = "foreground", average = True):
     """

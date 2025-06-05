@@ -67,7 +67,7 @@ def read_folder(bucket, path, download_path, folders_to_ignore, name):
         if not folders and not files:
             return ([],[])
         # Skip if empty
-        print("Exploring " + path)
+        # print("Exploring " + path)
         # Get target folder path
         # Get metadata files .zgroup and .zattrs
         for key in zarr_root_keys:
@@ -91,7 +91,7 @@ def read_folder(bucket, path, download_path, folders_to_ignore, name):
         print(f"Error exploring {path}: {e}")
     return (folders_to_explore, folders_to_download)
 
-def get_folder_parallel(bucket, path, download_path, name="s0", max_threads=None, folders_to_ignore=[], file_to_read=None):
+def get_folder_parallel(bucket, path, download_path, name="s0", max_threads=None, folders_to_ignore=[], file_to_read=None, write_path=None):
     """
     Explores folders in buckets and downloads the required folders using as many threads as given.
     Ignores folders with names in the list folders_to_ignore and adds all levels aside from the 
@@ -108,6 +108,7 @@ def get_folder_parallel(bucket, path, download_path, name="s0", max_threads=None
         max_threads: number of threads to use for downloading
         folders_to_ignore: list of folders to ignore
         file_to_read: (optional) path to a file with the folders to download, in the format `folder_path \t download_path`
+        write_path: (optional) path to print file. Will not create file if it is "None". 
     """
     max_threads = max_threads or os.cpu_count()
     folders_to_explore = [(path, download_path)]
@@ -150,14 +151,16 @@ def get_folder_parallel(bucket, path, download_path, name="s0", max_threads=None
 
         print("Finished exploring folders. Found "+ str(len(folders_to_download)) + f" folders to download in {mid-start}s. Downloading...")
         # Save list to file
-        file_path = f"{os.path.dirname(os.path.dirname(download_path))}/files/txt/to_download_{os.path.splitext(os.path.basename(download_path[:-1]))[0]}.txt"
-        
-        # Ensure the directory exists
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        
-        with open(file_path, "w") as f: 
-            for folder, path in folders_to_download:
-                f.write(f"{folder}\t{path}\n")
+        if write_path is not None: 
+            # Generate path
+            # file_path = f"{os.path.dirname(os.path.dirname(download_path))}/files/txt/to_download_{os.path.splitext(os.path.basename(download_path[:-1]))[0]}.txt"
+            
+            # Ensure the directory exists
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            
+            with open(file_path, "w") as f: 
+                for folder, path in folders_to_download:
+                    f.write(f"{folder}\t{path}\n")
         
     else:
         print("Reading file " + file_to_read)
@@ -176,7 +179,7 @@ def get_folder_parallel(bucket, path, download_path, name="s0", max_threads=None
         for future in as_completed(futures):
             future.result()  # trigger exceptions if any
     end = time.time()
-    print("Finished downloading " + str(len(folders_to_download)) + f"folders in {end - start}s (Found in {mid - start}s).")
+    print("Finished downloading " + str(len(folders_to_download)) + f" folders in {end - start}s (Found in {mid - start}s).")
 
 def get_filtered_from_bucket(names, path, bucket_str, inference = False, target_size = 8, max_threads = None):
     """
@@ -449,50 +452,6 @@ def resize_to_target(path_to_source, path_to_file, target_size = 8):
             os.remove(path_to_file)
         if os.path.exists(upsampled_path):
             os.remove(upsampled_path)
-
-def check_dataset_empty(path_to_file, subpath = "label_crop/mito", copy_path = None, remove = False):
-    """
-    Verifies whether an HDF5 file contains nonempty dataset in subpath.
-    If it is empty, verifies whether the "label_crop/all" dataset contains 
-    mito, i.e. id 3.
-
-    If copy_path is not none, copy all valid crops there.
-
-    If remove is True, delete original files from folder.
-
-    TODO: add creation of mask from all if mito is empty and there exist an 
-    instance of mito in "label_crop/all".  
-    """
-    ids = [3, 4] # IDs that refer to mitochondria
-    file_name = os.path.basename(path_to_file)
-    
-    with h5py.File(path_to_file, 'r') as f:
-        # Case there is an all crop
-        if "label_crop/all" in f.keys():
-            list_of_ids = np.unique(f["label_crop/all"])
-            print(list_of_ids)
-            if subpath not in f:
-                if ids in list_of_ids:
-                    # Case we have mito in all but not in mito, worst case
-                    print(file_name + " lacks mito label but has some in \"all\"")
-                else:
-                    print(file_name + " has no reference to mito")
-                    if remove:
-                        os.remove(path_to_file)
-            # Case the label is all zeros
-            elif not np.any(f[subpath]):
-                print("Empty mito label")
-                # print(np.unique(f["label_crop/mito"], return_counts=True))
-                if remove:
-                    os.remove(path_to_file)
-                
-                
-                return False
-            if copy_path is not None:
-                print("Copying file: ", path_to_file)
-                shutil.copyfile(path_to_file, copy_path)
-            # Else return true
-            return True
 
 def file_check(path_to_file):
     """
