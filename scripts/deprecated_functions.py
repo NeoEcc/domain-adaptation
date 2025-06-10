@@ -192,5 +192,25 @@ def read_zattrs(folder_path, bucket_str):
         with open('../files/zattrs/data.json', 'w') as outfile:
             json.dump(overall_json, outfile)
             json.dump(all_data, outfile)
-    except:
-        print("Failed to write file")
+    except Exception as e:
+        print("Failed to write file ", e)
+
+# # readme.md information        
+# Similarly, `data.json` is the product of `read-zattrs`, which takes a list of `.zattrs` files downloaded by `get-zattrs` and collects the important metadata of the zarrs available for download.  
+
+# ```
+# {
+#     name: foo,
+#     voxel_size: [z, y, x],
+#     has_groundtruth: True,
+#     has_inference: False
+# }
+# ```
+# It also stores the number of datasets with inference, ground truth and both:
+# ```
+# {
+#     "inference": x, 
+#     "groundtruth": y, 
+#     "groundtruth_and_inference": z,
+# }
+# ```

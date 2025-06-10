@@ -11,13 +11,6 @@ label_key = "label_crop/mito"
 block_size = (120,)*3
 halo = (20,)*3
 
-# model_name = "Anisotropic-3d-UNet-256-1"
-# # Keys for raw data and for labels
-# data_key = "raw_crop"
-# label_key = "label_crop/mito"
-# block_size = (192,)*3
-# halo = (32,)*3
-
 # Path to the the folder with samples to test for inference
 inference_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_crops/"
 
@@ -49,7 +42,7 @@ if __name__ == "__main__":
     #
 
     # Run inference on test files
-    for file, _ in zip(os.listdir(inference_path), range(10)):
+    for file in os.listdir(inference_path):
         print("Checking inference for ", file, " with ", model_name)
         check_inference(
             model, f"{inference_path}{file}", f"{save_inference_path}{file}", 
