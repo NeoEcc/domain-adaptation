@@ -16,7 +16,6 @@ def get_unsupervised_loader(
     raw_key: str,
     patch_shape: Tuple[int, int, int],
     batch_size: int,
-    n_crops: int,
     n_samples_epoch: Optional[int],
     roi = None,
     blacklist_roi = None,
@@ -28,8 +27,7 @@ def get_unsupervised_loader(
         raw_key: The key that holds the raw data inside of the hdf5 or zarr.
         patch_shape: The patch shape used for a training example.
         batch_size: The batch size for training.
-        n_crops: number of random crops to be extracted from the dataset
-        n_samples: The number of samples per epoch. By default this will be estimated
+        n_samples_epoch: The number of samples per epoch. By default this will be estimated
             based on the patch_shape and size of the volumes used for training.
         roi: specify a region of interest, can be None.
         blacklist_roi: list of regions to be avoided, as array of tuples of slices, or None
@@ -45,19 +43,21 @@ def get_unsupervised_loader(
     raw_transform = torch_em.transform.get_raw_transform()
     transform = torch_em.transform.get_augmentations(ndim=ndim)
     augmentations = (weak_augmentations(), weak_augmentations())
+    
+    if n_samples_epoch is None:
+        n_samples_per_ds = None
+    else:
+        n_samples_per_ds = int(n_samples_epoch / len(datasets))
+    
     ### MODIFIED HERE TO ADAPT TO ZARR
     datasets = [
         torch_em.data.RawDataset(data_path, raw_key, patch_shape, raw_transform, transform,
                                  augmentations=augmentations, roi=get_random_roi(roi, patch_shape, blacklist_roi),
                                  ndim=ndim, n_samples=n_samples_per_ds)
-        for _ in range(n_crops)
+        for _ in range(n_samples_epoch)
     ]
     ds = torch.utils.data.ConcatDataset(datasets)
 
-    if n_samples_epoch is None:
-        n_samples_per_ds = None
-    else:
-        n_samples_per_ds = int(n_samples_epoch / len(datasets))
     
     num_workers = 4 * batch_size
     loader = torch_em.segmentation.get_data_loader(ds, batch_size=batch_size, num_workers=num_workers, shuffle=True)
@@ -303,7 +303,6 @@ def get_random_roi(original_roi, size, blacklist = None):
         overlap = False
         if blacklist is not None:
             for bl in blacklist:
-                # print("Checking ", candidate, " and ", bl)
                 if slices_overlap(candidate, bl):
                     overlap = True
                     break
@@ -321,6 +320,35 @@ if __name__ == "__main__":
     size = (20, 20, 20)
     blacklist = [(slice(10, 30, 1), slice(40, 60, 1), slice(70, 90, 1))]
 
-    for x in range(5):
-        res = get_random_roi(original_roi, size, blacklist)
-        print(f"Random ROI in {original_roi}: {res}")
+    # for x in range(5):
+    #     res = get_random_roi(original_roi, size, blacklist)
+    #     print(f"Random ROI in {original_roi}: {res}")
+
+    # Test dataset
+    n_crops = 2
+    data_path = "/user/niccolo.eccel/u15001/example_dataset/jrc_ctl-id8-2.zarr"
+    raw_key = "/recon-1/em/fibsem-uint8/s0"
+    patch_shape = (5,)*3
+    raw_transform = None
+    transform = None
+    augmentations = None
+    raw_roi = (
+        slice(10000, 30000, 1),
+        slice(1000, 9000, 1),
+        slice(5000, 60000, 1)
+    )
+    blacklist_roi = [(slice(10949, 11349), slice(6089, 9000), slice(19209, 19609))]
+    small_roi=get_random_roi(raw_roi, patch_shape, blacklist_roi)
+    print(small_roi)
+
+    datasets = [
+        torch_em.data.RawDataset(data_path, raw_key, patch_shape, raw_transform, transform,
+                                    augmentations=augmentations, roi=small_roi,
+                                    ndim=3, n_samples=30)
+        for _ in range(n_crops)
+    ]
+    print(datasets[0])
+    print(type(datasets[0]))
+    print(datasets[0].__getitem__(1))
+    print(len(datasets))
+    print(type(datasets[0].__getitem__(0)[0][0][0][0]))
