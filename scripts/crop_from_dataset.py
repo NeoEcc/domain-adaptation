@@ -1,41 +1,61 @@
+# File dedicated to the functions required to sample crops from a large zarr file and store them for unsupervised training. 
+
 import zarr
 import os
 import numpy as np
+import h5py
 import random
 
 
-from zarr_utils import read_data, export_data
+from zarr_utils import export_data
+from scipy.ndimage import label
 
-def extract_crops(path_to_zarr, data_key, number_of_crops, crop_size, print_path, blacklist = None):
+def extract_crops(path_to_zarr, data_key, number_of_crops, crop_size, raw_roi = None, blacklist = None):
     """
     From a zarr archive, extract number of crops from a random spot (sequential). 
     Number of crops is per dimension: "2" will produce 4 crops in 2d and 8 in 3d. 
-    Returns all crops as an array. Can be saved as hdf5 by another function. 
+    Returns all crops as an array. If print path is given, saves files as hdf5.  
 
     Args:
         path_to_zarr (str): The path to the zarr file.
         data_key (str): The key to the data in the zarr archive.
         number_of_crops (int): The number of crops to extract from the zarr archive in each dimension.
         crop_size Tuple(int, int, int): The size of each crop to extract.
-        print_path (str): path to the folder where to print the HDF5 crops. 
+        raw_roi (Tuple(slice, slice)): optional ROI within the zarr. If None, will be set as the whole store.
         blacklist (list, optional): An optional list of crop ROIs to exclude from the extraction. Defaults to None.
     """
+    
     random_slices = []
     extracted_crops = []
     ndim = len(crop_size)
+    # Input checks
     if ndim != 2 and ndim != 3:
         raise ValueError("Only 2d or 3d tensors are supported")
+    if raw_roi is not None and len(raw_roi) != ndim:
+        raise ValueError("Number of dimensions of roi and crop must match")
+    
     n_samples = pow(number_of_crops, ndim)
-    # raw = read_data(path_to_zarr + data_key)
-    raw = np.arange(1000).reshape((10, 10, 10))
+    # Read zarr
+    zarr_store = zarr.open(path_to_zarr, mode='r')
+    raw = zarr_store[raw_key]
+
     roi_size = tuple(x * number_of_crops for x in crop_size)
     size = raw.shape
-    raw_roi = ( # temp
-        slice(0, size[0]),
-        slice(0, size[1]),
-        slice(0, size[2])
-    )
+    margin = 5
+    if raw_roi is None:
+        raw_roi = ( 
+            slice(margin, size[0] - margin),
+            slice(margin, size[1] - margin),
+            slice(margin, size[2] - margin)
+        )
+    # TODO: fix this check
+    elif any((raw_roi[s].start > size[s] for s in range(ndim))):
+        raise ValueError("ROI too large compared to the crop")
+    elif any((raw_roi[s].end > size[s] for s in range(ndim))):
+        print("Warning: ROI is larger than the crop, could cause issues")
+
     random_roi = get_random_roi(raw_roi, roi_size, blacklist)
+    # Extract the given number of ROIs from the selected area
     init_x = random_roi[0].start
     for x in range(number_of_crops):
         init_y = random_roi[1].start
@@ -51,7 +71,6 @@ def extract_crops(path_to_zarr, data_key, number_of_crops, crop_size, print_path
                             slice(init_z, init_z + crop_size[2])
                         )
                     )
-                    print(random_slices[-1])
                     init_z += crop_size[2]
             else:
                 random_slices.append(
@@ -60,9 +79,174 @@ def extract_crops(path_to_zarr, data_key, number_of_crops, crop_size, print_path
                             slice(init_y, init_y + crop_size[1])
                         )
                     )
-                print(random_slices[-1])
             init_y += crop_size[1]
         init_x += crop_size[0]
+    # Get the crops from zarr
+    for ex_slice in random_slices:
+        np_slice = np.s_[ex_slice]
+        extracted_crop = (raw[np_slice], ex_slice)
+        extracted_crops.append(extracted_crop)
+        
+    return extracted_crops
+    
+def extract_samples(path_to_zarr, data_key, crop_number, crops_per_batch_dim, crop_size, print_path, raw_roi = None, blacklist = None):
+    """
+    From a zarr archive, extract number of crops from a set of random spots and saves them as HDF5. 
+    Number of crops is per dimension: "2" will produce 4 crops in 2d and 8 in 3d. 
+
+    Args:
+        path_to_zarr (str): The path to the zarr file.
+        data_key (str): The key to the data in the zarr archive.
+        crop_number (int): number of crops to be extracted, total. Must be a multiple of `crops_per_batch_dim^dim`
+        crops_per_batch_dim (int): Per-dimension batch size to extract from each random point. 
+        crop_size Tuple(int, int, int): The size of each crop to extract.
+        print_path (str): path to the folder where to print the HDF5 crops; None to skip this step.
+        raw_roi (Tuple(slice, slice)): optional ROI within the zarr. If None, will be set as the whole store.
+        blacklist (list, optional): An optional list of crop ROIs to exclude from the extraction. Defaults to None.
+    """
+    # Input checks
+    ndim = len(crop_size)
+    if ndim != 2 and ndim != 3:
+        raise ValueError("Only 2d or 3d tensors are supported")
+    if raw_roi is not None and len(raw_roi) != ndim:
+        raise ValueError("Number of dimensions of roi and crop must match")
+    if print_path is None:
+        raise ValueError("print_path cannot be None")
+    elif print_path[-1] != "/":
+        print_path += "/"
+    # Batch check
+    magic_number = pow(crops_per_batch_dim, ndim)
+    if crop_number % magic_number != 0:
+        print(f"Warning: {crop_number} is not a multiple of {magic_number}.")
+        crop_number = crop_number - crop_number % magic_number + magic_number
+        print(f"Will generate {crop_number} samples instead. ")
+    # Crop sampling and writing 
+    generated_crops = 0
+    while generated_crops < crop_number:
+        print("Getting new batch")
+        crops = extract_crops(path_to_zarr, data_key, crops_per_batch_dim, crop_size, raw_roi = raw_roi, blacklist = blacklist)
+        for crop, coordinates in crops:
+            generated_crops += 1
+            # To store coordinates as an attribute
+            starts = tuple(s.start for s in coordinates)
+            stops  = tuple(s.stop for s in coordinates)
+            jsonable_coordinates = (starts, stops)
+
+            with h5py.File(f"{print_path}raw_crop_{generated_crops}.h5", "w") as f:
+                f.create_dataset("raw", data=crop.astype(crop.dtype))
+                f.attrs["voxel_size"] = (8,8,8)
+                f.attrs["coordinates"] = jsonable_coordinates
+                f.attrs["source_dataset"] = "https://open.quiltdata.com/b/janelia-cosem-datasets/tree/jrc_mus-liver/"
+                # for keys, values in zip(f.attrs.keys(), f.attrs.values()):
+                #     print(keys, ": ", values)
+        print("Batch created. Current crops created: ", generated_crops)
+
+def extract_labeled_samples(path_to_dataset, raw_roi, raw_key, label_key, print_path, label_roi = None):
+    """
+    Given the path to a zarr archive, a ROI within it, and the path to a label file,
+    creates an HDF5 file containing the raw crop and the labels. 
+
+    Args:   
+        path_to_raw (str): path to the zarr archive. 
+        raw_roi (Tuple(Slice(int, int), ...)): tuple of slices representing the position
+        of the crop in the raw dataset.
+        label_key (str): position of the labels in the file. 
+        raw_key (str): position of the raw in the file.
+        print_path (str): path to where the file will be printed, including filename.
+        label_roi: if given, will be used. If None, will be considered from the origin the same size as the crop. 
+
+    """
+    # Initial checks
+    ndim = len(raw_roi)
+    if ndim != 2 and ndim != 3:
+        raise ValueError("Only 2d or 3d tensors are supported")
+    if raw_roi is not None or len(raw_roi) != ndim:
+        raise ValueError("ROI must be given and dimensions must match")
+    if print_path is None:
+        raise ValueError("print_path cannot be None")
+    
+    # Open zarr, get raw and labels
+    zarr_store = zarr.open(path_to_dataset, mode='r')
+    raw_dataset = zarr_store[raw_key]
+    label_dataset = zarr_store[label_key]
+
+    # get slices for raw, calculate for label if None
+    np_slice = np.s_[raw_roi]
+    raw_crop = raw_dataset[np_slice]
+
+    size = raw_crop.shape
+    if label_roi is None:
+        if ndim == 3:
+            raw_roi = ( 
+                slice(0, size[0]),
+                slice(0, size[1]),
+                slice(0, size[2])
+            )
+        else:
+            raw_roi = ( 
+                slice(0, size[0]),
+                slice(0, size[1]),
+            )    
+    
+    # Separate instances
+    mito, _ = label(label_dataset[label_roi])
+    with h5py.File(print_path, "w") as f:
+        f.create_dataset("raw_crop", raw_crop)
+        f.create_dataset("label_crop/mito", mito)
+
+def get_sub_crops(original_crop, crop_size):
+    """
+    From a large crop, extracts as many smaller crops as possible in an array.
+
+    Args:
+        original_crop (np.array): array from which to get the crops
+        crop_size (Tuple(int)): size of the sub-crops
+    """   
+    # Input checks
+    ndim = len(crop_size)
+    if ndim != 2 and ndim != 3:
+        raise ValueError("Only 2d or 3d tensors are supported")
+    if ndim != len(original_crop.shape):
+        raise ValueError("Dimensions of crop must be the same as the slice")
+    if any(s < c for s, c in zip(original_crop.shape, crop_size)): 
+        raise ValueError(f"Inserted crop is smaller than the slice size ({original_crop.shape},{crop_size})")
+    elif all(s == c for s, c in zip(original_crop.shape, crop_size)):
+        print("Warining: size of original crop and crop size are the same")
+        return [original_crop]
+    elif any(s % c != 0 for s, c in zip(original_crop.shape, crop_size)):
+        print("Warining: part of the crop will be discarded. ", crop_size, " is not a multiple of ", original_crop.shape)
+    sub_crops = []
+    slices = []
+
+    # Per-dimension division, can iterate indefinitely since the checks have been made
+    x = 0
+    while x <= original_crop.shape[0] - crop_size[0]:
+        y = 0
+        while y <= original_crop.shape[1] - crop_size[1]:
+            temp_slice = (
+                slice(x, x + crop_size[0]),
+                slice(y, y + crop_size[1])
+            )
+            if ndim == 3:
+                z = 0
+                while z <= original_crop.shape[2] - crop_size[2]:
+                    print("x,y,z: ",  x, " ",y , " ", z)
+                    temp_slice_z = temp_slice + (slice(z, z + crop_size[2]),)
+                    slices.append(temp_slice_z)
+                    z += crop_size[2]
+            else:
+                slices.append(temp_slice)
+            y += crop_size[1]
+        x += crop_size[0]
+    for x in slices:
+        np_slice = np.s_[x]
+        sub_crop = original_crop[np_slice]
+        sub_crops.append(sub_crop)
+        print(x)
+        print(sub_crop)
+    print(len(sub_crops))
+    return sub_crops
+
     
 
 def slices_overlap(a, b):
@@ -140,12 +324,41 @@ def get_random_roi(original_roi, size, blacklist = None):
 
 
 if __name__ == "__main__":
-    n_crops = 2
+    n_crops = 80
+    n_crops_dim = 2 # !!! 2 -> 8, 3 -> 64   
     test_data_path = "/user/niccolo.eccel/u15001/example_dataset/jrc_ctl-id8-2.zarr"
     data_path = "/scratch-grete/projects/nim00007/data/cellmap/datasets/janelia-cosem-datasets/jrc_mus-liver/jrc_mus-liver.zarr"
     print_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/unlabeled_crops/"
-    raw_key = "/recon-1/em/fibsem-uint8/"
-    patch_shape = (5,)*3
-    # extract_crops(test_data_path, raw_key, n_crops, (3,)*3, print_path)
-    data = read_data(test_data_path)
-    print(data)
+    raw_key = "/recon-1/em/fibsem-uint8/s0/"
+    patch_shape = (512,)*3
+    raw_roi = (
+        slice(30000, 80000),
+        slice(20000, 50000),
+        slice(35000, 50000)
+    )
+    # raw_roi = ( # For selecting the test
+    #     slice(28000, 30000),
+    #     slice(18000, 20000),
+    #     slice(30000, 33000)
+    # )
+    raw_roi = None
+    blacklist = [
+         (
+        slice(40052, 40852),
+        slice(48724, 49524),
+        slice(45636, 46436),
+    ),
+    (
+        slice(35396, 36996),
+        slice(28060, 29660),
+        slice(36500, 38100)
+    ),
+    ( # Biggest white spot within the ROI
+        slice(35000, 80000),
+        slice(30000, 48000),
+        slice(49000, 42000)
+    )
+    ]
+    # extract_samples(data_path, raw_key, n_crops, n_crops_dim, patch_shape, print_path, raw_roi, blacklist)
+    test_array = np.resize(np.arange(125), (5,5,5))
+    get_sub_crops(test_array, (2,2,4))

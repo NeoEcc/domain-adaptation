@@ -79,7 +79,7 @@ def export_data(export_path: str, data):
     else:
         raise ValueError(f"Unsupported file format: {ext}")
 
-    print(f"Data successfully exported to {export_path}")
+    # print(f"Data successfully exported to {export_path}")
 
 def zarr_to_h5(zarr_path: str, export_path=None, delete = True):
     """
