@@ -1,13 +1,12 @@
-# File dedicated to the functions required to sample crops from a large zarr file and store them for unsupervised training. 
+# File dedicated to the functions required to sample crops from a large zarr file and store them for semisupervised training. 
 
 import zarr
 import os
 import numpy as np
 import h5py
 import random
+import time
 
-
-from zarr_utils import export_data
 from scipy.ndimage import label
 
 def extract_crops(path_to_zarr, data_key, number_of_crops, crop_size, raw_roi = None, blacklist = None):
@@ -33,8 +32,7 @@ def extract_crops(path_to_zarr, data_key, number_of_crops, crop_size, raw_roi = 
         raise ValueError("Only 2d or 3d tensors are supported")
     if raw_roi is not None and len(raw_roi) != ndim:
         raise ValueError("Number of dimensions of roi and crop must match")
-    
-    n_samples = pow(number_of_crops, ndim)
+
     # Read zarr
     zarr_store = zarr.open(path_to_zarr, mode='r')
     raw = zarr_store[raw_key]
@@ -43,16 +41,12 @@ def extract_crops(path_to_zarr, data_key, number_of_crops, crop_size, raw_roi = 
     size = raw.shape
     margin = 5
     if raw_roi is None:
-        raw_roi = ( 
-            slice(margin, size[0] - margin),
-            slice(margin, size[1] - margin),
-            slice(margin, size[2] - margin)
-        )
-    # TODO: fix this check
+        raw_roi = tuple(slice(margin, s - margin) for s in size)
+    # TODO: check if this is correct
     elif any((raw_roi[s].start > size[s] for s in range(ndim))):
-        raise ValueError("ROI too large compared to the crop")
-    elif any((raw_roi[s].end > size[s] for s in range(ndim))):
-        print("Warning: ROI is larger than the crop, could cause issues")
+        raise ValueError(f"ROI is outside the crop: {raw_roi} vs {size}")
+    elif any((raw_roi[s].stop > size[s] for s in range(ndim))):
+        print(f"Warning: ROI is partly outside the crop, could cause issues: {raw_roi} vs {size}")
 
     random_roi = get_random_roi(raw_roi, roi_size, blacklist)
     # Extract the given number of ROIs from the selected area
@@ -121,8 +115,9 @@ def extract_samples(path_to_zarr, data_key, crop_number, crops_per_batch_dim, cr
         crop_number = crop_number - crop_number % magic_number + magic_number
         print(f"Will generate {crop_number} samples instead. ")
     # Crop sampling and writing 
-    generated_crops = 0
-    while generated_crops < crop_number:
+    offset = 0 # In case of creating many times, to get different names. 
+    generated_crops = 0 + offset
+    while generated_crops < crop_number + offset:
         print("Getting new batch")
         crops = extract_crops(path_to_zarr, data_key, crops_per_batch_dim, crop_size, raw_roi = raw_roi, blacklist = blacklist)
         for crop, coordinates in crops:
@@ -141,58 +136,68 @@ def extract_samples(path_to_zarr, data_key, crop_number, crops_per_batch_dim, cr
                 #     print(keys, ": ", values)
         print("Batch created. Current crops created: ", generated_crops)
 
-def extract_labeled_samples(path_to_dataset, raw_roi, raw_key, label_key, print_path, label_roi = None):
+def extract_labeled_sample(path_to_dataset, raw_roi, raw_key, label_key, print_path, path_to_labels = None, label_roi = None):
     """
     Given the path to a zarr archive, a ROI within it, and the path to a label file,
     creates an HDF5 file containing the raw crop and the labels. 
 
     Args:   
-        path_to_raw (str): path to the zarr archive. 
+        path_to_raw (str): path to the zarr archive with the raw.  
         raw_roi (Tuple(Slice(int, int), ...)): tuple of slices representing the position
         of the crop in the raw dataset.
         label_key (str): position of the labels in the file. 
         raw_key (str): position of the raw in the file.
         print_path (str): path to where the file will be printed, including filename.
+        path_to_labels (str): path to the zarr archive with the labels. 
+            If None, will be inferred as the same as the raw or from the origin
         label_roi: if given, will be used. If None, will be considered from the origin the same size as the crop. 
 
     """
     # Initial checks
+    if raw_roi is None:
+        raise ValueError("ROI must be given")
     ndim = len(raw_roi)
     if ndim != 2 and ndim != 3:
         raise ValueError("Only 2d or 3d tensors are supported")
-    if raw_roi is not None or len(raw_roi) != ndim:
-        raise ValueError("ROI must be given and dimensions must match")
     if print_path is None:
         raise ValueError("print_path cannot be None")
-    
-    # Open zarr, get raw and labels
-    zarr_store = zarr.open(path_to_dataset, mode='r')
-    raw_dataset = zarr_store[raw_key]
-    label_dataset = zarr_store[label_key]
+    if path_to_labels is None:
+        path_to_labels = path_to_dataset
 
-    # get slices for raw, calculate for label if None
+    # Open zarr, get raw and labels
+    raw_zarr_store = zarr.open(path_to_dataset, mode='r')
+    label_zarr_store = zarr.open(path_to_labels, mode='r')
+    raw_dataset = raw_zarr_store[raw_key]
+    label_dataset = label_zarr_store[label_key]
+
+
+    # get slices of raw, calculate slice for label if None
     np_slice = np.s_[raw_roi]
     raw_crop = raw_dataset[np_slice]
+    print("slice:         ", np_slice)
+    print("raw size:      ", raw_dataset.shape)
 
+    print("label_dataset: ", label_dataset.shape)
+    print("raw_crop:      ", raw_crop.shape)
+    print("Raw roi:       ", raw_roi)
+
+    # If the same ROI as raw is too large, adapt to be 0 to size 
     size = raw_crop.shape
-    if label_roi is None:
-        if ndim == 3:
-            raw_roi = ( 
-                slice(0, size[0]),
-                slice(0, size[1]),
-                slice(0, size[2])
-            )
-        else:
-            raw_roi = ( 
-                slice(0, size[0]),
-                slice(0, size[1]),
-            )    
-    
-    # Separate instances
+    if any((label_roi[s].stop > size[s] for s in range(ndim))):
+        label_roi = tuple(slice(0, s) for s in size)
+    else:
+        label_roi = raw_roi
+
+    # Create labels and separate instances
     mito, _ = label(label_dataset[label_roi])
+    if not mito.any():
+        print("Warining: empty labels found")
+    # Print to file
     with h5py.File(print_path, "w") as f:
-        f.create_dataset("raw_crop", raw_crop)
-        f.create_dataset("label_crop/mito", mito)
+        f.create_dataset("raw_crop", data = raw_crop)
+        f.create_dataset("label_crop/mito", data = mito)
+        f.attrs["voxel_size"] = (8,8,8)
+        f.attrs["source_dataset"] = "https://open.quiltdata.com/b/janelia-cosem-datasets/tree/jrc_mus-liver/"
 
 def get_sub_crops(original_crop, crop_size):
     """
@@ -230,7 +235,7 @@ def get_sub_crops(original_crop, crop_size):
             if ndim == 3:
                 z = 0
                 while z <= original_crop.shape[2] - crop_size[2]:
-                    print("x,y,z: ",  x, " ",y , " ", z)
+                    # print("x,y,z: ",  x, " ",y , " ", z)
                     temp_slice_z = temp_slice + (slice(z, z + crop_size[2]),)
                     slices.append(temp_slice_z)
                     z += crop_size[2]
@@ -238,23 +243,33 @@ def get_sub_crops(original_crop, crop_size):
                 slices.append(temp_slice)
             y += crop_size[1]
         x += crop_size[0]
+    # Get crops from slices
     for x in slices:
         np_slice = np.s_[x]
         sub_crop = original_crop[np_slice]
         sub_crops.append(sub_crop)
-        print(x)
-        print(sub_crop)
-    print(len(sub_crops))
     return sub_crops
-
-    
+    # # To get crops from a file:
+    # with h5py.File("/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/unlabeled_crops/raw_crop_1.h5", "r") as f:
+    #     raw = f["raw"]
+    #     coordinates = f.attrs["coordinates"]
+    #     sub_crops = get_sub_crops(raw, (128,)*3)
+    # x = 1
+    # for crop in sub_crops:
+    #     with h5py.File(f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/unlabeled_crops/raw_crop_1_{x}.h5", "w") as f:
+    #         f.create_dataset("raw", data=crop.astype(crop.dtype))
+    #         f.attrs["voxel_size"] = (8,8,8)
+    #         f.attrs["approx_coordinates"] = coordinates
+    #         f.attrs["source_dataset"] = "https://open.quiltdata.com/b/janelia-cosem-datasets/tree/jrc_mus-liver/"
+    #     print("created ", x)
+    #     x += 1
 
 def slices_overlap(a, b):
-    # Returns True if slices a and b overlap in any dimensions
-    x = []
-    for d in range(len(a)):
-        x.append(a[d].stop < b[d].start or a[d].start >= b[d].stop) 
-    return not all(x) # Can be probably made easier with a not and a direct return true
+    """
+    Returns True if the hyperrectangles defined by tuples of slices `a` and `b` overlap
+    in all dimensions
+    """
+    return all(s1.start < s2.stop and s2.start < s1.stop for s1, s2 in zip(a, b))
 
 def get_random_roi(original_roi, size, blacklist = None):
     """
@@ -278,7 +293,7 @@ def get_random_roi(original_roi, size, blacklist = None):
         blacklist: A list of regions to avoid when sampling the ROI. None to accept all samples. 
         Must be an array of tuples of slices.
     """
-    max_attempts = 250
+    max_attempts = 1000
 
     # Input checks
     if original_roi is None:
@@ -302,7 +317,7 @@ def get_random_roi(original_roi, size, blacklist = None):
         valid_starts.append((starts[d], max_start))
 
     # Try up to max_attempts times to find a non-blacklisted ROI
-    for _ in range(max_attempts):
+    for n in range(max_attempts):
         rand_start = [random.randint(valid_starts[d][0], valid_starts[d][1]) for d in range(dims)]
         rand_stop = [rand_start[d] + size[d] for d in range(dims)]
         candidate = tuple(slice(rand_start[d], rand_stop[d]) for d in range(dims))
@@ -314,51 +329,143 @@ def get_random_roi(original_roi, size, blacklist = None):
                 # print("Checking ", candidate, " and ", bl)
                 if slices_overlap(candidate, bl):
                     overlap = True
+                    if n >= (max_attempts -3):
+                        print(f"{n} attempts used - blacklisted item: ", bl, " for ", original_roi) 
                     break
                 
         if not overlap:
-            # assert not any(slices_overlap(candidate, bl) for bl in blacklist), f"Overlap detected: {candidate} vs {blacklist}"
             return candidate
 
-    raise RuntimeError(f"Could not find a valid ROI after {max_attempts} attempts")
-
+    raise RuntimeError(f"Could not find a valid ROI after {max_attempts} attempts for {size} in {original_roi}")
 
 if __name__ == "__main__":
-    n_crops = 80
-    n_crops_dim = 2 # !!! 2 -> 8, 3 -> 64   
+    n_crops = 1
+    n_crops_dim = 1 # !!! 2 -> 8, 3 -> 27, 4 -> 64   
     test_data_path = "/user/niccolo.eccel/u15001/example_dataset/jrc_ctl-id8-2.zarr"
     data_path = "/scratch-grete/projects/nim00007/data/cellmap/datasets/janelia-cosem-datasets/jrc_mus-liver/jrc_mus-liver.zarr"
-    print_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/unlabeled_crops/"
+    print_path_unlabeled = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/unlabeled_crops/"
+    base_path_labeled = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/labeled_crops/"
+    base_path_labels = "/user/niccolo.eccel/u15001/example_dataset/"
     raw_key = "/recon-1/em/fibsem-uint8/s0/"
+    label_key = "/mito/s0/"
     patch_shape = (512,)*3
-    raw_roi = (
-        slice(30000, 80000),
-        slice(20000, 50000),
-        slice(35000, 50000)
+    train_roi = (  # Divide by 8 as coordinates are in nm and 1 px = 8nm
+        slice(35000/8, 50000/8), # x
+        slice(20000/8, 50000/8), # y
+        slice(30000/8, 80000/8), # z
     )
-    # raw_roi = ( # For selecting the test
-    #     slice(28000, 30000),
-    #     slice(18000, 20000),
-    #     slice(30000, 33000)
-    # )
-    raw_roi = None
+    selected_roi_1 = (   # 80825, 13486, 67009 - 66418, 32242, 56951
+        slice(6687, 8250, None), 
+        slice(1850, 4030, None), 
+        slice(8375, 10125, None),
+    )
+    selected_roi_2 = ( #  75397, 69836, 980 - 100677, 61274, 17697
+        slice(250, 1875, None),
+        slice(7375, 8912, None), 
+        slice(10000, 11875, None), 
+    )
+    test_roi = (
+        slice(28000/8, 35000/8), # x
+        slice(20000/8, 50000/8), # y
+        slice(30000/8, 80000/8), # z
+    )
+    
+    # Check that test has never been used
+    assert not slices_overlap(test_roi, train_roi)
+    assert not slices_overlap(test_roi, selected_roi_1)
+    assert not slices_overlap(test_roi, selected_roi_2)
+
     blacklist = [
-         (
-        slice(40052, 40852),
-        slice(48724, 49524),
-        slice(45636, 46436),
-    ),
-    (
-        slice(35396, 36996),
-        slice(28060, 29660),
-        slice(36500, 38100)
-    ),
-    ( # Biggest white spot within the ROI
-        slice(35000, 80000),
-        slice(30000, 48000),
-        slice(49000, 42000)
-    )
+        (   # crop 136         ("crop136", ([4424, 3507, 4562], [4624, 3707, 4762])), zyx
+            slice(4562, 4624),
+            slice(3507, 3707),
+            slice(4424, 4762),
+        ),
+        (   # crop 144         ("crop144", ([5006, 6090, 5704], [5106, 6190, 5804])), zyx
+            slice(5704, 5804), 
+            slice(6090, 6090),
+            slice(5006, 5106),
+        ),
+        (   # crop 124         ("crop124", ([43796, 36356, 76836], [45396, 37956, 78436])),
+            slice(9604, 9804),
+            slice(4544, 4744),
+            slice(5474, 5674),
+        ),
+        (   # crop 135         ("crop135", ([34620, 39036, 54876], [36220, 40636, 56476])),
+            slice(6859, 7059),
+            slice(4879, 5079),
+            slice(4327, 4527),
+        ),
+        (   # crop 139         ("crop139", ([36668, 46420, 72996], [37468, 47220, 73796])),
+            slice(9124, 9224),
+            slice(5802, 5902),
+            slice(4583, 4683),
+        ),
+        (   # crop 142         ("crop142", ([34804, 41124, 65884], [35604, 41924, 66684])),
+            slice(8235, 8335),
+            slice(5140, 5240),
+            slice(4350, 4450),
+        ),
     ]
-    # extract_samples(data_path, raw_key, n_crops, n_crops_dim, patch_shape, print_path, raw_roi, blacklist)
-    test_array = np.resize(np.arange(125), (5,5,5))
-    get_sub_crops(test_array, (2,2,4))
+    for b in blacklist:
+        assert not slices_overlap(test_roi, b)
+
+
+    data_voxel = [ # !!! Z Y X
+        ("crop124", ([5474, 4544, 9604], [5674, 4744, 9804])),
+        ("crop125", ([4015, 10412, 7608], [4215, 10612, 7808])),
+        ("crop131", ([2269, 2912, 2964], [2319, 3112, 3164])),
+        ("crop132", ([4442, 5715, 3321], [4642, 5915, 3521])),
+        ("crop133", ([4274, 7349, 5699], [4474, 7549, 5899])),
+        ("crop135", ([4327, 4879, 6859], [4527, 5079, 7059])), 
+        ("crop136", ([4424, 3507, 4562], [4624, 3707, 4762])),
+        ("crop137", ([6999, 4150, 9016], [7199, 4350, 9216])),
+        ("crop138", ([7999, 4599, 6499], [8199, 4799, 6699])),
+        ("crop139", ([4583, 5802, 9124], [4683, 5902, 9224])), 
+        ("crop142", ([4350, 5140, 8235], [4450, 5240, 8335])),
+        ("crop143", ([2634, 4952, 6474], [2734, 5052, 6574])),
+        ("crop144", ([5006, 6090, 5704], [5106, 6190, 5804])),
+        ("crop145", ([2194, 7718, 5793], [2374, 8093, 6168])),
+        ("crop150", ([4348, 2024, 9124], [4448, 2124, 9224])),
+        ("crop151", ([1696, 5187, 5592], [1796, 5287, 5692])),
+        ("crop157", ([8654, 4774, 2999], [8754, 4874, 3099])),
+        ("crop171", ([4468, 6596, 6780], [4668, 6658, 6980])),
+        ("crop172", ([2038, 7178, 4156], [2288, 7428, 4356])),
+        ("crop175", ([2042, 7252, 4619], [2442, 7402, 4919])),
+        ("crop177", ([799, 399, 399], [1599, 1199, 1199])),
+        ("crop183", ([8654, 4774, 2999], [8754, 4874, 3099])),
+        ("crop416", ([4468, 6596, 6780], [4668, 6658, 6980])),
+        ("crop417", ([2038, 7178, 4156], [2288, 7428, 4356])),
+    ]
+
+    name, ([z, y, x], [zz, yy, xx]) = data_voxel[-3]
+    raw_roi = (
+        slice(z, zz),
+        slice(y, yy),
+        slice(x, xx),
+    )
+    start = time.time()
+    # for crop in data_voxel:
+    #     name, ([z, y, x], [zz, yy, xx]) = crop
+    #     raw_roi = (
+    #         slice(z, zz),
+    #         slice(y, yy),
+    #         slice(x, xx),
+    #     )
+    #     print_path_labeled = f"{base_path_labeled}{name}.h5"
+    #     path_to_labels = f"{base_path_labels}{name}.zarr"
+    #     print("Creating ", print_path_labeled , f" from {x}, {y}, {z} (xyz) in {path_to_labels}")
+    #     # extract_samples(data_path, raw_key, n_crops, n_crops_dim, patch_shape, print_path_unlabeled, train_roi, blacklist)
+    #     extract_labeled_sample(data_path, raw_roi, raw_key, label_key, print_path_labeled, path_to_labels, label_roi = test_roi)
+    # end = time.time()
+    # print("Created ",n_crops ," samples in ", end - start, " seconds.")
+    for file in os.listdir("/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/labeled_crops/"):
+        path_to_file = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/labeled_crops/{file}"
+        with h5py.File(path_to_file, 'r') as f:
+            try:
+                print(os.path.basename(path_to_file))
+                print("First element of labels: " + str(f["label_crop/mito"][0][0][0]))
+                print("Is it empty? : ", not ["label_crop/mito"].any())
+                print()
+            except Exception as e:
+                print(os.path.basename(path_to_file), ": failed to open dataset mito: ", e)
