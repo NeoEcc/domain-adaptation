@@ -2,35 +2,84 @@
 # https://github.com/computational-cell-analytics/synapse-net/blob/main/synapse_net/training/semisupervised_training.py
 
 from typing import Optional, Tuple
+from torchvision import transforms
+from torch_em.util import load_model
 
+
+import os
 import numpy as np
 import torch
 import torch_em
 import torch_em.self_training as self_training
-from torchvision import transforms
-import random
 
+def get_sub_rois(original_roi: Tuple[slice], crop_size: Tuple[int]):
+    """
+    From a large ROI, extracts as many smaller ROI as possible in an array.
+
+    Args:
+        original_roi (Tuple(slice)): tuple of slices representing the ROI from which to get the crops
+        crop_size (Tuple(int)): size of the sub-crops
+    """   
+    # Input checks
+    ndim = len(crop_size)
+    if ndim != 2 and ndim != 3:
+        raise ValueError("Only 2d or 3d ROIs are supported")
+    if ndim != len(original_roi.shape):
+        raise ValueError("Dimensions of ROI must be the same as the crop")
+    if any(s < c for s, c in zip(original_roi.shape, crop_size)): 
+        raise ValueError(f"Inserted ROI is smaller than the crop size ({original_roi.shape},{crop_size})")
+    elif all(s == c for s, c in zip(original_roi.shape, crop_size)):
+        print("Warining: size of original crop and crop size are the same")
+        return [original_roi] 
+    elif any(s % c != 0 for s, c in zip(original_roi.shape, crop_size)):
+        print("Warining: part of the crop will be discarded. ", crop_size, " is not a multiple of ", original_roi.shape)
+
+    slices = []
+
+    # Per-dimension division, can iterate indefinitely since the checks have been made
+    x = 0
+    while x <= original_roi.shape[0] - crop_size[0]:
+        y = 0
+        while y <= original_roi.shape[1] - crop_size[1]:
+            temp_slice = (
+                slice(x, x + crop_size[0]),
+                slice(y, y + crop_size[1])
+            )
+            if ndim == 3:
+                z = 0
+                while z <= original_roi.shape[2] - crop_size[2]:
+                    temp_slice_z = temp_slice + (slice(z, z + crop_size[2]),)
+                    slices.append(temp_slice_z)
+                    z += crop_size[2]
+            else:
+                slices.append(temp_slice)
+            y += crop_size[1]
+        x += crop_size[0]
+    # Return
+    return slices
 
 def get_unsupervised_loader(
-    data_path: str,
+    data_paths: list[str],
     raw_key: str,
     patch_shape: Tuple[int, int, int],
     batch_size: int,
     n_samples_epoch: Optional[int],
-    roi = None,
-    blacklist_roi = None,
+    # roi = None,
+    # blacklist_roi = None,
 ) -> torch.utils.data.DataLoader:
     """Get a dataloader for unsupervised segmentation training.
 
     Args:
-        data_path: The filepath to the hdf5 or zarr file from which to sample the training data.
+        data_path: The filepaths to the hdf5 or zarr files with the training data.
         raw_key: The key that holds the raw data inside of the hdf5 or zarr.
         patch_shape: The patch shape used for a training example.
         batch_size: The batch size for training.
         n_samples_epoch: The number of samples per epoch. By default this will be estimated
             based on the patch_shape and size of the volumes used for training.
-        roi: specify a region of interest, can be None.
-        blacklist_roi: list of regions to be avoided, as array of tuples of slices, or None
+
+        Not implemented in this version:
+        # roi: specify a region of interest, can be None.
+        # blacklist_roi: list of regions to be avoided, as array of tuples of slices, or None
 
     Returns:
         The PyTorch dataloader.
@@ -49,13 +98,27 @@ def get_unsupervised_loader(
     else:
         n_samples_per_ds = int(n_samples_epoch / len(datasets))
     
-    ### MODIFIED HERE TO ADAPT TO ZARR  
-    datasets = [
-        torch_em.data.RawDataset(data_path, raw_key, patch_shape, raw_transform, transform,
-                                 augmentations=augmentations, roi=get_random_roi(roi, patch_shape, blacklist_roi),
-                                 ndim=ndim, n_samples=n_samples_per_ds)
-        for _ in range(n_samples_epoch)
-    ]
+    # HDF5 version
+    # Each sample is 512x. Must extract 64 128x crops from each.
+    crops_shape = (slice(0,512),)*3
+    target_shape = (slice(0,128),)*3
+    rois = get_sub_rois(crops_shape, target_shape)
+    datasets = []
+    for current_path in data_paths:
+        datasets.append ([
+            torch_em.data.RawDataset(current_path, raw_key, patch_shape, raw_transform, transform,
+                                    augmentations=augmentations, roi=roi,
+                                    ndim=ndim, n_samples=n_samples_per_ds)
+            for roi in rois
+        ])
+
+    # ### MODIFIED HERE TO ADAPT TO ZARR  
+    # datasets = [
+    #     torch_em.data.RawDataset(data_path, raw_key, patch_shape, raw_transform, transform,
+    #                              augmentations=augmentations, roi=get_random_roi(roi, patch_shape, blacklist_roi),
+    #                              ndim=ndim, n_samples=n_samples_per_ds)
+    #     for _ in range(n_samples_epoch)
+    # ]
     ds = torch.utils.data.ConcatDataset(datasets)
 
     
@@ -66,13 +129,13 @@ def get_unsupervised_loader(
 def semisupervised_training(
     name: str,
     model,
-    unlabeled_train_path: str,
-    labeled_train_path: str,
-    val_paths: Tuple[str],
+    train_paths: Tuple[list[str], list[str]],
+    val_paths: Tuple[list[str], list[str]],
     label_key: str,
     patch_shape: Tuple[int, int, int],
     save_root: str,
     raw_key: str = "raw",
+    load_path: Optional[str] = None,
     batch_size: int = 1,
     lr: float = 1e-4,
     n_iterations: int = int(1e5),
@@ -84,14 +147,15 @@ def semisupervised_training(
     Args:
         name: The name for the checkpoint to be trained.
         model: The model to be trained
-        train_paths: Filepath to the hdf5 or zarr file for the training data.
-        val_paths: Filepaths to the hdf5 or zarr files for the validation data.
+        train_paths: tuple with labeled and unlabeled arrays of paths to HDF5 or zarr files for training 
+        val_paths: tuple with labeled and unlabeled arrays of paths to HDF5 or zarr files for validation
         label_key: The key that holds the labels inside of the hdf5 or zarr.
         patch_shape: The patch shape used for a training example.
             In order to run 2d training pass a patch shape with a singleton in the z-axis,
             e.g. 'patch_shape = [1, 512, 512]'.
         save_root: Folder where the checkpoint will be saved.
         raw_key: The key that holds the raw data inside of the hdf5 or zarr.
+        load_path: Filepath to the model to be trained. If None, will initialize from 0.
         batch_size: The batch size for training.
         lr: The initial learning rate.
         n_iterations: The number of iterations to train for.
@@ -101,16 +165,22 @@ def semisupervised_training(
             based on the patch_shape and size of the volumes used for validation.
         check: Whether to check the training and validation loaders instead of running training.
     """
+    # Loading of the previous model if load_path is not None
+    if load_path is not None:
+        if not os.path.exists(load_path):
+            raise ValueError("Path to model is empty: " + load_path)
+        model = load_model(load_path, model)
+
     # Keeping the separated paths for now; 
-    
-    train_loader = get_supervised_loader(labeled_train_path, raw_key, label_key, patch_shape, batch_size,
+
+    train_loader = get_supervised_loader(train_paths[0], raw_key, label_key, patch_shape, batch_size,
                                          n_samples=n_samples_train)
-    val_loader = get_supervised_loader(val_paths, raw_key, label_key, patch_shape, batch_size,
+    val_loader = get_supervised_loader(val_paths[0], raw_key, label_key, patch_shape, batch_size,
                                        n_samples=n_samples_val)
 
-    unsupervised_train_loader = get_unsupervised_loader(unlabeled_train_path, raw_key, patch_shape, batch_size,
+    unsupervised_train_loader = get_unsupervised_loader(train_paths[1], raw_key, patch_shape, batch_size,
                                                         n_samples_epoch=n_samples_train)
-    unsupervised_val_loader = get_unsupervised_loader(val_paths, raw_key, patch_shape, batch_size,
+    unsupervised_val_loader = get_unsupervised_loader(val_paths[1], raw_key, patch_shape, batch_size,
                                                       n_samples_epoch=n_samples_val)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -142,6 +212,7 @@ def semisupervised_training(
         log_image_interval=100,
         compile_model=False,
         save_root=save_root,
+        reinit_teacher=load_path is None # !! Reinitialize it if we start from scratch
     )
     trainer.fit(n_iterations)
    
@@ -241,88 +312,7 @@ def get_supervised_loader(
     )
     return loader
 
-def slices_overlap(a, b):
-    # Returns True if slices a and b overlap in any dimensions
-    x = []
-    for d in range(len(a)):
-        x.append(a[d].stop < b[d].start or a[d].start >= b[d].stop) 
-    return not all(x) # Can be probably made easier with a not and a direct return true
-
-def get_random_roi(original_roi, size, blacklist = None):
-    """
-    Returns a random region of interest within the original roi coordinate space
-    that does not include any voxel in the blacklist, of the specified size. 
-    Works in any dimension. Boundaries of the blacklist are also excluded.
-
-    Algorithm, to be used dimension-wide:
-    - Get a starting point between beginning and end - size
-    - Create final point adding size to starting point
-    - For all items in blacklist:
-        - If the initial point of the roi is larger than the final point, all good
-        - If the final point is smaller than the initial point, all good.
-    - If these conditions are met, return a valid roi.
-    - Otherwise, add 1 to the counter and restart. 
-    - If the counter reaches a threshold, stop. Could be extremely unlucky or wrong initialization.
-        
-    Args:
-        original_roi: The original region of interest within which to sample.
-        size: The shape (tuple of ints) of the desired random ROI.
-        blacklist: A list of regions to avoid when sampling the ROI. None to accept all samples. 
-        Must be an array of tuples of slices.
-    """
-    max_attempts = 250
-
-    # Input checks
-    if original_roi is None:
-        raise ValueError("original_roi must be provided")
-    if isinstance(original_roi, tuple):
-        roi_slices = original_roi
-    else:
-        roi_slices = tuple(original_roi)
-
-    # If there is some none, set to 0 - makes sense only in the start
-    starts = [slc.start if slc.start is not None else 0 for slc in roi_slices]
-    stops = [slc.stop for slc in roi_slices]
-    dims = len(starts)
-
-    # Get the maximum starting point between start and end - size
-    valid_starts = []
-    for d in range(dims):
-        max_start = stops[d] - size[d]
-        if max_start < starts[d]:
-            raise ValueError(f"ROI size {size} is too large for dimension {d} in original_roi {original_roi}")
-        valid_starts.append((starts[d], max_start))
-
-    # Try up to max_attempts times to find a non-blacklisted ROI
-    for _ in range(max_attempts):
-        rand_start = [random.randint(valid_starts[d][0], valid_starts[d][1]) for d in range(dims)]
-        rand_stop = [rand_start[d] + size[d] for d in range(dims)]
-        candidate = tuple(slice(rand_start[d], rand_stop[d]) for d in range(dims))
-
-        # Check overlap
-        overlap = False
-        if blacklist is not None:
-            for bl in blacklist:
-                if slices_overlap(candidate, bl):
-                    overlap = True
-                    break
-                
-        if not overlap:
-            # assert not any(slices_overlap(candidate, bl) for bl in blacklist), f"Overlap detected: {candidate} vs {blacklist}"
-            return candidate
-
-    raise RuntimeError(f"Could not find a valid ROI after {max_attempts} attempts")
-
-
 if __name__ == "__main__":
-    # Test for ROI
-    original_roi = slice(0, 100, 1), slice(0, 100, 1), slice(0, 100, 1)
-    size = (20, 20, 20)
-    blacklist = [(slice(10, 30, 1), slice(40, 60, 1), slice(70, 90, 1))]
-
-    # for x in range(5):
-    #     res = get_random_roi(original_roi, size, blacklist)
-    #     print(f"Random ROI in {original_roi}: {res}")
 
     # Test dataset
     n_crops = 2
@@ -332,23 +322,3 @@ if __name__ == "__main__":
     raw_transform = None
     transform = None
     augmentations = None
-    raw_roi = (
-        slice(10000, 30000, 1),
-        slice(1000, 9000, 1),
-        slice(5000, 60000, 1)
-    )
-    blacklist_roi = [(slice(10949, 11349), slice(6089, 9000), slice(19209, 19609))]
-    small_roi=get_random_roi(raw_roi, patch_shape, blacklist_roi)
-    print(small_roi)
-
-    datasets = [
-        torch_em.data.RawDataset(data_path, raw_key, patch_shape, raw_transform, transform,
-                                    augmentations=augmentations, roi=small_roi,
-                                    ndim=3, n_samples=30)
-        for _ in range(n_crops)
-    ]
-    print(datasets[0])
-    print(type(datasets[0]))
-    print(datasets[0].__getitem__(1))
-    print(len(datasets))
-    print(type(datasets[0].__getitem__(0)[0][0][0][0]))

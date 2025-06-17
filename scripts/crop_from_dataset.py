@@ -9,7 +9,7 @@ import time
 
 from scipy.ndimage import label
 
-def extract_crops(path_to_zarr, data_key, number_of_crops, crop_size, raw_roi = None, blacklist = None):
+def extract_crops(path_to_zarr, raw_key, number_of_crops, crop_size, raw_roi = None, blacklist = None):
     """
     From a zarr archive, extract number of crops from a random spot (sequential). 
     Number of crops is per dimension: "2" will produce 4 crops in 2d and 8 in 3d. 
@@ -17,7 +17,7 @@ def extract_crops(path_to_zarr, data_key, number_of_crops, crop_size, raw_roi = 
 
     Args:
         path_to_zarr (str): The path to the zarr file.
-        data_key (str): The key to the data in the zarr archive.
+        raw_key (str): The key to the data in the zarr archive.
         number_of_crops (int): The number of crops to extract from the zarr archive in each dimension.
         crop_size Tuple(int, int, int): The size of each crop to extract.
         raw_roi (Tuple(slice, slice)): optional ROI within the zarr. If None, will be set as the whole store.
@@ -341,7 +341,7 @@ def get_random_roi(original_roi, size, blacklist = None):
 if __name__ == "__main__":
     n_crops = 1
     n_crops_dim = 1 # !!! 2 -> 8, 3 -> 27, 4 -> 64   
-    test_data_path = "/user/niccolo.eccel/u15001/example_dataset/jrc_ctl-id8-2.zarr"
+
     data_path = "/scratch-grete/projects/nim00007/data/cellmap/datasets/janelia-cosem-datasets/jrc_mus-liver/jrc_mus-liver.zarr"
     print_path_unlabeled = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/unlabeled_crops/"
     base_path_labeled = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/labeled_crops/"
@@ -444,7 +444,9 @@ if __name__ == "__main__":
         slice(y, yy),
         slice(x, xx),
     )
-    start = time.time()
+
+    # Create crops
+    # start = time.time()
     # for crop in data_voxel:
     #     name, ([z, y, x], [zz, yy, xx]) = crop
     #     raw_roi = (
@@ -459,13 +461,28 @@ if __name__ == "__main__":
     #     extract_labeled_sample(data_path, raw_roi, raw_key, label_key, print_path_labeled, path_to_labels, label_roi = test_roi)
     # end = time.time()
     # print("Created ",n_crops ," samples in ", end - start, " seconds.")
-    for file in os.listdir("/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/labeled_crops/"):
-        path_to_file = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/labeled_crops/{file}"
-        with h5py.File(path_to_file, 'r') as f:
-            try:
-                print(os.path.basename(path_to_file))
-                print("First element of labels: " + str(f["label_crop/mito"][0][0][0]))
-                print("Is it empty? : ", not ["label_crop/mito"].any())
-                print()
-            except Exception as e:
-                print(os.path.basename(path_to_file), ": failed to open dataset mito: ", e)
+
+    label_key = ""
+    test_crop_path = f"{base_path_labels}mito_instance_seg.zarr"
+    print_test = f"{base_path_labeled}test_crop.h5"
+    extract_labeled_sample(data_path, test_roi, raw_key, label_key, print_test, )
+    
+    # Verifying which samples have mitochondria
+    
+    # good_samples = []
+    # for file in os.listdir("/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/labeled_crops/"):
+    #     path_to_file = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/labeled_crops/{file}"
+    #     with h5py.File(path_to_file, 'r') as f:
+    #         try:
+    #             print(os.path.basename(path_to_file))
+    #             print("Rand element of labels: " + str(f["label_crop/mito"][40][40][40]))
+    #             if np.any(f["label_crop/mito"]):
+    #                 print("Labels ok")
+    #                 good_samples.append(file)
+    #             print()
+    #         except Exception as e:
+    #             print(os.path.basename(path_to_file), ": failed to open dataset mito: ", e)
+    # print()
+    # print("Good samples with mito: ")
+    # good_samples.sort()
+    # print(good_samples)

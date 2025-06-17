@@ -52,8 +52,6 @@ if __name__ == "__main__":
     bucket_str = "s3://janelia-cosem-datasets"
     folder_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/"
 
-    # get_filtered_from_bucket(names_with_labels, folder_path, bucket_str, max_threads=64)
-
     b = q3.Bucket("s3://janelia-cosem-datasets")
     folders_to_ignore = [
         "cell_seg",
@@ -64,11 +62,14 @@ if __name__ == "__main__":
         "nucleus_seg",
     ]
     # b.fetch("jrc_ctl-id8-2/jrc_ctl-id8-2.zarr/", "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/example_dataset/jrc_ctl-id8-2.zarr/")
-    get_folder_parallel(
-        b, 
-        "jrc_ctl-id8-2/jrc_ctl-id8-2.zarr/", 
-        "/user/niccolo.eccel/u15001/example_dataset/jrc_ctl-id8-2.zarr/", 
-        "s0", 
-        16, 
-        folders_to_ignore, 
-    )
+    # get_folder_parallel(
+    #     b, 
+    #     "jrc_ctl-id8-2/jrc_ctl-id8-2.zarr/", 
+    #     "/user/niccolo.eccel/u15001/example_dataset/jrc_ctl-id8-2.zarr/", 
+    #     "s0", 
+    #     16, 
+    #     folders_to_ignore, 
+    # )
+    print("Getting segmentation")
+    # b.fetch("jrc_mus-liver/jrc_mus-liver.zarr/recon-1/labels/masks/evaluation/", "/user/niccolo.eccel/u15001/example_dataset/mito_instance_seg.zarr/")
+    b.fetch("jrc_mus-liver/jrc_mus-liver.n5/labels/mito_seg/s0/", "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/inference.n5/mito/")
