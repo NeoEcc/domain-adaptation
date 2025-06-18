@@ -18,9 +18,8 @@ model_name = None
 learning_rate = 1.0e-4      # learning rate for the optimizer
 batch_size = 1              # batch size for the dataloader
 epochs = 5000               # number of epochs to train the model for
-random_seed = 42            # random seed for reproducibility
 classes = ["mito"]          # list of classes to segment
-patch_shape = (256,)*3      # Patch shape - modified in various runs
+patch_shape = (128,)*3      # Patch shape - modified in various runs
 val_split = 0.1             # Fraction of the data to use for validation
 num_workers = 2             # Limit number of cpus
 loss_function = torch_em.loss.DiceLoss()
@@ -28,24 +27,25 @@ metric_function = torch_em.loss.DiceLoss()
 device = "cuda"             # Device required for training
 
 if model_name is None:
-    model_name = f"Anisotropic-3d-UNet-{patch_shape[0]}-{batch_size}"
+    model_name = f"Source-AUNet-{patch_shape[0]}-{batch_size}"
+    # model_name = f"Anisotropic-3d-UNet-{patch_shape[0]}-{batch_size}"
 #
 # Paths
 #
 
 # Path of the training folder
-data_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/mito_crops/"
+data_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/"    # Includes target domain
 
 # Path to the checkpoints folder
 save_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/model/"
 
 # Path to the samples to test for inference
-inference_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/inference_crops/"
+test_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_crops/"
 
 # Path to the best version of the model
 # Give none to train from scratch
-# best_path = None
 best_path = f"{save_path}checkpoints/{model_name}/best.pt"
+best_path = None
 
 # Keys for raw data and for labels
 data_key = "raw_crop"
@@ -66,7 +66,10 @@ scale_factors = [           # All the same, since on average all dimensions have
     ]
 
 model = AnisotropicUNet(
-    in_channels=in_channels, out_channels=out_channels, scale_factors=scale_factors, final_activation="Sigmoid"
+    in_channels = in_channels, 
+    out_channels = out_channels, 
+    scale_factors = scale_factors, 
+    final_activation = "Sigmoid"
 )
 
 if best_path is not None and not os.path.exists(best_path):
@@ -82,11 +85,34 @@ if best_path is not None:
 
 # OR adamw
 optimizer = RAdam(
-            model.parameters(), lr=learning_rate, decoupled_weight_decay=True
+            model.parameters(), lr = learning_rate, decoupled_weight_decay = True
         )
 
+paths_to_files = directory_to_path_list(data_path)
+print(len(paths_to_files))
+target_labeled = [
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_124.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_125.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_131.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_132.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_133.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_135.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_136.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_137.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_138.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_143.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_144.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_145.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_150.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_157.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_177.h5",
+    "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_183.h5",
+]
+
+paths_to_files = np.setdiff1d(paths_to_files, target_labeled)
+
 train_loader, val_loader = get_dataloader(
-    directory_to_path_list(data_path), 
+    paths_to_files,
     data_key,
     label_key, 
     val_split, 
@@ -104,7 +130,7 @@ trainer = DefaultTrainer(
     model = model,
     loss = loss_function,
     optimizer = optimizer,
-    early_stopping= 25,
+    early_stopping = 25,
     lr_scheduler= scheduler,
     metric = metric_function,
     device = device,
