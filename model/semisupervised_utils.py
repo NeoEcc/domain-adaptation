@@ -7,7 +7,6 @@ from torch_em.util import load_model
 
 
 import os
-import numpy as np
 import torch
 import torch_em
 import torch_em.self_training as self_training
@@ -312,13 +311,5 @@ def get_supervised_loader(
     )
     return loader
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
 
-    # Test dataset
-    n_crops = 2
-    data_path = "/user/niccolo.eccel/u15001/example_dataset/jrc_ctl-id8-2.zarr"
-    raw_key = "/recon-1/em/fibsem-uint8/s0"
-    patch_shape = (5,)*3
-    raw_transform = None
-    transform = None
-    augmentations = None
