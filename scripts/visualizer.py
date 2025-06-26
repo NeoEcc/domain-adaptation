@@ -23,7 +23,6 @@ def get_file_paths(path, ext=".h5", reverse=False):
         paths = sorted(glob(os.path.join(path, "**", f"*{ext}"), recursive=True), reverse=reverse)
         return paths
 
-
 def visualize_data(data):
     viewer = napari.Viewer()
     for key, value in data.items():
@@ -47,7 +46,6 @@ def visualize_data(data):
 
     napari.run()
 
-
 def extract_data(group: Any, data: Dict[str, Any], prefix: str = "", scale: int = 1):
     """
     Recursively extract datasets from a group and store them in a dictionary.
@@ -67,19 +65,6 @@ def extract_data(group: Any, data: Dict[str, Any], prefix: str = "", scale: int 
             # # Store the dataset in the dictionary
             # data[full_key] = item[:]
 
-
-# def upsample_data(data, factor):
-#     """Upsample a 3D dataset in chunks to avoid memory overload."""
-#     upsampled_data = np.zeros(tuple(dim * factor for dim in data.shape), dtype=data.dtype)
-#     for z in range(data.shape[0]):
-#         upsampled_data[z * factor: (z + 1) * factor] = resize(
-#             data[z],
-#             (factor * data.shape[1], factor * data.shape[2]),
-#             order=0, preserve_range=True, anti_aliasing=False
-#         ).astype(data.dtype)
-#     return upsampled_data
-
-
 def main(root_path: str, ext: str = None, scale: int = 1, upsample: bool = False, root_label_path: str = None):
     if ext is None:
         print("Loading h5, n5 and zarr files")
@@ -90,10 +75,6 @@ def main(root_path: str, ext: str = None, scale: int = 1, upsample: bool = False
         paths.extend(get_file_paths(root_path, ".rec"))
     else:
         paths = get_file_paths(root_path, ext)
-    if root_label_path is not None:
-        label_paths = get_file_paths(root_label_path, ".tif")
-    else:
-        label_paths = None
     print("Found files:", len(paths))
     for path in tqdm(paths):
         print("\n", path)
@@ -134,18 +115,6 @@ def main(root_path: str, ext: str = None, scale: int = 1, upsample: bool = False
                     slicing = tuple(slice(None, None, scale) if i >= (ndim - 3) else slice(None) for i in range(ndim))
                     # Apply downsampling while preserving batch/channel dimensions
                     data[key] = f[key][slicing] if scale > 1 else f[key][:]
-
-        # if upsample:
-        #     del data["pred"]
-        #     del data["raw"]
-
-        #     for key in data.keys():
-        #         data[key] = upsample_data(data[key], upsample)
-
-        raw_shape = None
-        for k in data.keys():
-            if "raw" in k:
-                raw_shape = data[k].shape
         
         visualize_data(data)
 
@@ -153,29 +122,28 @@ def main(root_path: str, ext: str = None, scale: int = 1, upsample: bool = False
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--path", "-p", type=str)
+    parser.add_argument("--ext", "-e", type=str, default=None)
+    parser.add_argument("--scale", "-s", type=int, default=1)
+    parser.add_argument("--upsample", "-u", type=int, default=None)
+    parser.add_argument("--label_path", "-lp", type=str, default=None)
     args = parser.parse_args()
     path = args.path
-    # path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_crops/crop_325.h5"
-    viewer = napari.Viewer()
-    with h5py.File(path) as f:
-        for key, value in f.items():
-            if key in ["label", "label_crop"]:
-                viewer.add_labels(value)
-            else:
-                viewer.add_image(value)
-    napari.run()
+    ext = args.ext
+    scale = args.scale
+    upsample = args.upsample
+    label_path = args.label_path
+    main(path, ext, scale, upsample, label_path)
 
-
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument("--path", "-p", type=str)
-#     parser.add_argument("--ext", "-e", type=str, default=None)
-#     parser.add_argument("--scale", "-s", type=int, default=1)
-#     parser.add_argument("--upsample", "-u", type=int, default=None)
-#     parser.add_argument("--label_path", "-lp", type=str, default=None)
-#     args = parser.parse_args()
-#     path = args.path
-#     ext = args.ext
-#     scale = args.scale
-#     upsample = args.upsample
-#     label_path = args.label_path
-#     main(path, ext, scale, upsample, label_path)
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("--path", "-p", type=str)
+    # args = parser.parse_args()
+    # path = args.path
+    # # path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_crops/crop_325.h5"
+    # viewer = napari.Viewer()
+    # with h5py.File(path) as f:
+    #     for key, value in f.items():
+    #         if key in ["label", "label_crop"]:
+    #             viewer.add_labels(value)
+    #         else:
+    #             viewer.add_image(value)
+    # napari.run()
