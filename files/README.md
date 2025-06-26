@@ -15,6 +15,9 @@ The download is performed using the scripts found in scripts/mythocondria_downlo
 `get_some` only downloads the files with ground truth, or setting `inference = True`, also files with inference. For all files in the list, it checks if there is ground truth or inference; if yes, determines the right voxel size and downloads the file in the specified folder, then converts it to HDF5.
 Since the reading phase can take a long time, the list of all files found for download are stored in a txt file with the same name as the dataset, under `files/txt/{name}_to_download`. The path to this file can be passed as a parameter to the function to skip the reading process. 
 
+### Extraction
+From the whole zarr, `scripts/crop_from_dataset` contains all the necessary functions to extract crops with standard size and format. 
+
 ### Statistics
 `utils.py` also contains functions to read dataset information relevant for training, such as resolution and voxel size.
 
