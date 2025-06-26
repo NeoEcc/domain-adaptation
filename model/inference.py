@@ -2,14 +2,13 @@ import os
 
 from torch_em.util import load_model
 from model_utils import check_inference, test_inference_loss
-from UNet import model
+from UNet import model, model_name
 
-model_name = "Anisotropic-3d-UNet-160-1"
 # Keys for raw data and for labels
 data_key = "raw_crop"
 label_key = "label_crop/mito"
-block_size = (120,)*3
-halo = (20,)*3
+block_size = (90,)*3
+halo = (19,)*3
 
 # Path to the the folder with samples to test for inference
 inference_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_crops/"
@@ -19,11 +18,6 @@ save_inference_path = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria
 
 # Path to the checkpoints folder
 save_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/model/"
-
-if model_name is None:
-    from UNet import model_name
-if data_key is None:
-    from UNet import data_key
 
 # Path to the best version of the model
 best_path = f"{save_path}checkpoints/{model_name}/best.pt"

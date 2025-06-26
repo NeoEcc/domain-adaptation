@@ -95,6 +95,8 @@ def directory_to_path_list(directory) -> list:
 
     Args
         directory (str): path to a folder containing files. 
+    Returns:
+        paths_list
     """
     # Input check: add a "/" if not there not to mess up later
     if directory == "":

@@ -45,7 +45,7 @@ test_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test
 # Path to the best version of the model
 # Give none to train from scratch
 best_path = f"{save_path}checkpoints/{model_name}/best.pt"
-best_path = None
+# best_path = None
 
 # Keys for raw data and for labels
 data_key = "raw_crop"
@@ -89,7 +89,7 @@ optimizer = RAdam(
         )
 
 paths_to_files = directory_to_path_list(data_path)
-print(len(paths_to_files))
+
 target_labeled = [
     "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_124.h5",
     "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_125.h5",
