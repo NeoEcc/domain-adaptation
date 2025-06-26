@@ -153,14 +153,29 @@ def main(root_path: str, ext: str = None, scale: int = 1, upsample: bool = False
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--path", "-p", type=str)
-    parser.add_argument("--ext", "-e", type=str, default=None)
-    parser.add_argument("--scale", "-s", type=int, default=1)
-    parser.add_argument("--upsample", "-u", type=int, default=None)
-    parser.add_argument("--label_path", "-lp", type=str, default=None)
     args = parser.parse_args()
     path = args.path
-    ext = args.ext
-    scale = args.scale
-    upsample = args.upsample
-    label_path = args.label_path
-    main(path, ext, scale, upsample, label_path)
+    # path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_crops/crop_325.h5"
+    viewer = napari.Viewer()
+    with h5py.File(path) as f:
+        for key, value in f.items():
+            if key in ["label", "label_crop"]:
+                viewer.add_labels(value)
+            else:
+                viewer.add_image(value)
+    napari.run()
+
+
+#     parser = argparse.ArgumentParser()
+#     parser.add_argument("--path", "-p", type=str)
+#     parser.add_argument("--ext", "-e", type=str, default=None)
+#     parser.add_argument("--scale", "-s", type=int, default=1)
+#     parser.add_argument("--upsample", "-u", type=int, default=None)
+#     parser.add_argument("--label_path", "-lp", type=str, default=None)
+#     args = parser.parse_args()
+#     path = args.path
+#     ext = args.ext
+#     scale = args.scale
+#     upsample = args.upsample
+#     label_path = args.label_path
+#     main(path, ext, scale, upsample, label_path)
