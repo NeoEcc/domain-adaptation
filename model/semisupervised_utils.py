@@ -303,7 +303,10 @@ def get_supervised_loader(
     shuffle = loader_kwargs.pop("shuffle", True)
 
     if sampler is None:
-        sampler = torch_em.data.sampler.MinInstanceSampler(min_num_instances=4)
+        # sampler = torch_em.data.sampler.MinInstanceSampler(min_num_instances=4)
+        # This is the default, but will never work with this dataset; using the only value that works
+        # (1) would make it useless.
+        sampler = torch_em.data.sampler.MinForegroundSampler(0.01, 0.999)
 
     loader = torch_em.default_segmentation_loader(
         data_paths, raw_key,
@@ -314,3 +317,17 @@ def get_supervised_loader(
         label_dtype=label_dtype, rois=rois, **loader_kwargs,
     )
     return loader
+
+if __name__ == "__main__":
+    # Check label voxels - getting sampler timeout
+    from model_utils import directory_to_path_list
+    import h5py
+    import numpy as np
+
+    labeled_folder_path = "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/target_labeled"
+    source_labeled_folder_path = "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/source_labeled"
+    labeled_data_paths = directory_to_path_list(source_labeled_folder_path) + directory_to_path_list(labeled_folder_path) 
+    for path in labeled_data_paths:
+        with h5py.File(path) as f:
+            data = f["label_crop/mito"]
+            print(f"{path}: {np.count_nonzero(data[:])}")
