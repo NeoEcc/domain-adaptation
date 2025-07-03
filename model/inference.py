@@ -11,13 +11,13 @@ block_size = (90,)*3
 halo = (19,)*3
 
 # Path to the the folder with samples to test for inference
-inference_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_crops/"
+inference_path = "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/"
 
 # Path to the folder where tostore the files modified for inference
-save_inference_path = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_inference/{model_name}/"
+save_inference_path = f"/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_inference/{model_name}/"
 
 # Path to the checkpoints folder
-save_path = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/model/"
+save_path = "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/model/"
 
 # Path to the best version of the model
 best_path = f"{save_path}checkpoints/{model_name}/best.pt"
