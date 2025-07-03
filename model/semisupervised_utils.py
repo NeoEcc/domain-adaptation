@@ -23,30 +23,31 @@ def get_sub_rois(original_roi: Tuple[slice], crop_size: Tuple[int]):
     ndim = len(crop_size)
     if ndim != 2 and ndim != 3:
         raise ValueError("Only 2d or 3d ROIs are supported")
-    if ndim != len(original_roi.shape):
+    if ndim != len(original_roi):
         raise ValueError("Dimensions of ROI must be the same as the crop")
-    if any(s < c for s, c in zip(original_roi.shape, crop_size)): 
-        raise ValueError(f"Inserted ROI is smaller than the crop size ({original_roi.shape},{crop_size})")
-    elif all(s == c for s, c in zip(original_roi.shape, crop_size)):
+    roi_shape = tuple(s.stop - s.start for s in original_roi)
+    if any(s < c for s, c in zip(roi_shape, crop_size)): 
+        raise ValueError(f"Inserted ROI is smaller than the crop size ({roi_shape},{crop_size})")
+    elif all(s == c for s, c in zip(roi_shape, crop_size)):
         print("Warining: size of original crop and crop size are the same")
         return [original_roi] 
-    elif any(s % c != 0 for s, c in zip(original_roi.shape, crop_size)):
-        print("Warining: part of the crop will be discarded. ", crop_size, " is not a multiple of ", original_roi.shape)
+    elif any(s % c != 0 for s, c in zip(roi_shape, crop_size)):
+        print("Warining: part of the crop will be discarded. ", crop_size, " is not a multiple of ", roi_shape)
 
     slices = []
 
     # Per-dimension division, can iterate indefinitely since the checks have been made
     x = 0
-    while x <= original_roi.shape[0] - crop_size[0]:
+    while x <= original_roi[0].stop - crop_size[0]:
         y = 0
-        while y <= original_roi.shape[1] - crop_size[1]:
+        while y <= original_roi[1].stop - crop_size[1]:
             temp_slice = (
                 slice(x, x + crop_size[0]),
                 slice(y, y + crop_size[1])
             )
             if ndim == 3:
                 z = 0
-                while z <= original_roi.shape[2] - crop_size[2]:
+                while z <= original_roi[2].stop - crop_size[2]:
                     temp_slice_z = temp_slice + (slice(z, z + crop_size[2]),)
                     slices.append(temp_slice_z)
                     z += crop_size[2]
@@ -100,7 +101,7 @@ def get_unsupervised_loader(
     # HDF5 version
     # Each sample is 512x. Must extract 64 128x crops from each.
     crops_shape = (slice(0,512),)*3
-    target_shape = (slice(0,128),)*3
+    target_shape = (128,)*3
     rois = get_sub_rois(crops_shape, target_shape)
     datasets = []
     for current_path in data_paths:
@@ -171,7 +172,7 @@ def semisupervised_training(
         model = load_model(load_path, model)
 
     # Keeping the separated paths for now; 
-
+    
     train_loader = get_supervised_loader(train_paths[0], raw_key, label_key, patch_shape, batch_size,
                                          n_samples=n_samples_train)
     val_loader = get_supervised_loader(val_paths[0], raw_key, label_key, patch_shape, batch_size,
@@ -211,7 +212,7 @@ def semisupervised_training(
         log_image_interval=100,
         compile_model=False,
         save_root=save_root,
-        reinit_teacher=load_path is None # !! Reinitialize it if we start from scratch
+        reinit_teacher=load_path is None # Reinitialize only if we start from scratch
     )
     trainer.fit(n_iterations)
    
@@ -310,6 +311,3 @@ def get_supervised_loader(
         label_dtype=label_dtype, rois=rois, **loader_kwargs,
     )
     return loader
-
-# if __name__ == "__main__":
-
