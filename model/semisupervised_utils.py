@@ -93,24 +93,27 @@ def get_unsupervised_loader(
     transform = torch_em.transform.get_augmentations(ndim=ndim)
     augmentations = (weak_augmentations(), weak_augmentations())
     
-    if n_samples_epoch is None:
-        n_samples_per_ds = None
-    else:
-        n_samples_per_ds = int(n_samples_epoch / len(datasets))
-    
     # HDF5 version
     # Each sample is 512x. Must extract 64 128x crops from each.
     crops_shape = (slice(0,512),)*3
     target_shape = (128,)*3
     rois = get_sub_rois(crops_shape, target_shape)
+    
+    # Calculate samples per dataset
+    total_datasets = len(data_paths) * len(rois)
+    if n_samples_epoch is None:
+        n_samples_per_ds = None
+    else:
+        n_samples_per_ds = int(n_samples_epoch / total_datasets)
+    
     datasets = []
     for current_path in data_paths:
-        datasets.append ([
-            torch_em.data.RawDataset(current_path, raw_key, patch_shape, raw_transform, transform,
-                                    augmentations=augmentations, roi=roi,
-                                    ndim=ndim, n_samples=n_samples_per_ds)
-            for roi in rois
-        ])
+        for roi in rois:
+            datasets.append(
+                torch_em.data.RawDataset(current_path, raw_key, patch_shape, raw_transform, transform,
+                                        augmentations=augmentations, roi=roi,
+                                        ndim=ndim, n_samples=n_samples_per_ds)
+            )
 
     # ### MODIFIED HERE TO ADAPT TO ZARR  
     # datasets = [
