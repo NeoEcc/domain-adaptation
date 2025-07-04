@@ -7,18 +7,14 @@ from sklearn.model_selection import train_test_split
 from UNet import model
 
 # Domain adaptation modes - comment or uncomment to select
-domain_adaptation_mode = "one-step"
+# domain_adaptation_mode = "one-step"
     # One step uses the source domain in the labeled data and target domain in the unlabeled data to train a model from scratch.
     # Performs pure semi-supervised training
-# domain_adaptation_mode = "two-steps"
+domain_adaptation_mode = "two-steps"
     # Two steps uses the source domain labeled data to train a model, 
     # and unlabeled and few labeled data from the target domain to refine the same model. 
 
 # Name of the model to be used as a base (for two-steps) and the new model and path to checkpoint
-old_model_name = "Source-AUNet-128-1"
-best_path = None
-# new_model_name = f"{old_model_name}-{domain_adaptation_mode}-DA"
-new_model_name = "AUNet-128-1-one-step-DA"
 
 #
 # Hyperparameters
@@ -28,19 +24,26 @@ lr = 1.0e-4
 val_split = 0.15
 batch_size = 1
 
+old_model_name = "Source-AUNet-128-1"
+best_path = None
+new_model_name = f"AUNet-{patch_shape[0]}-{batch_size}-{domain_adaptation_mode}-DA"
+
 # Path to the checkpoints folder
 save_path = "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/model/"
+
 # Internal paths
 raw_key = "/raw_crop"
 label_key = "/label_crop/mito"
+
 # Paths to the data in the target domain
 unlabeled_folder_path = "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/target_unlabeled"
 labeled_folder_path = "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/target_labeled"
-# Path to all labeled crops
+
+# Path to the data in the source domain
 source_labeled_folder_path = "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/source_labeled"
 
 if domain_adaptation_mode == "two-steps":
-    # Get the data paths
+    # Get the data paths from target domain only
     unlabeled_data_paths = directory_to_path_list(unlabeled_folder_path)
     labeled_data_paths = directory_to_path_list(labeled_folder_path)
     unlabeled_train_paths, unlabeled_val_paths = train_test_split(unlabeled_data_paths, test_size = val_split, random_state = 42)
@@ -55,12 +58,13 @@ if domain_adaptation_mode == "two-steps":
     # Feature moved into the training function; keeping this check 
 
 elif domain_adaptation_mode == "one-step":
-    # Get the data paths
+    # Get the data paths - labeled from source, unlabeled from target domain
     unlabeled_data_paths = directory_to_path_list(unlabeled_folder_path)
-    
     labeled_data_paths = directory_to_path_list(source_labeled_folder_path) + directory_to_path_list(labeled_folder_path) 
     unlabeled_train_paths, unlabeled_val_paths = train_test_split(unlabeled_data_paths, test_size = val_split, random_state = 42)
     labeled_train_paths, labeled_val_paths = train_test_split(labeled_data_paths, test_size = val_split, random_state = 42)
+    # Make sure not to load any model
+    best_path = None
 else:
     raise ValueError(f"Expected 'one-step' or 'two-steps', got {domain_adaptation_mode}")
     
@@ -68,7 +72,7 @@ else:
 if __name__ == "__main__":
     model.train()
     semisupervised_training(
-        name = old_model_name, 
+        name = new_model_name, 
         model = model, 
         train_paths = (labeled_train_paths, unlabeled_train_paths), 
         val_paths = (labeled_val_paths, unlabeled_val_paths), 
@@ -78,5 +82,6 @@ if __name__ == "__main__":
         raw_key = raw_key,
         load_path = best_path,
         batch_size = batch_size,
-        lr = lr
+        lr = lr,
+        n_iterations = 250000
     )
