@@ -214,3 +214,24 @@ def read_zattrs(folder_path, bucket_str):
 #     "groundtruth_and_inference": z,
 # }
 # ```
+
+# crop_from_dataset.py
+    # Verifying which samples have mitochondria
+    
+good_samples = []
+for file in os.listdir("/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/labeled_crops/"):
+    path_to_file = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/labeled_crops/{file}"
+    with h5py.File(path_to_file, 'r') as f:
+        try:
+            print(os.path.basename(path_to_file))
+            print("Rand element of labels: " + str(f["label_crop/mito"][40][40][40]))
+            if np.any(f["label_crop/mito"]):
+                print("Labels ok")
+                good_samples.append(file)
+            print()
+        except Exception as e:
+            print(os.path.basename(path_to_file), ": failed to open dataset mito: ", e)
+print()
+print("Good samples with mito: ")
+good_samples.sort()
+print(good_samples)
