@@ -5,9 +5,47 @@ import os
 import numpy as np
 import h5py
 import random
-import time
+import z5py
+import h5py
+import zarr
+import numpy as np
+from typing import Tuple
+import zarr
+import s3fs
+import quilt3 as q3
 
 from scipy.ndimage import label
+
+def h5_from_bucket(zarr_path, zarr_key, hdf5_path, roi):
+    """
+    Given the details in a bucket, downloads only the specified part of a dataset (roi) and
+    prints the dataset in an hdf5 file.
+    Args:
+        zarr_path (str): Path to the zarr file in the S3 bucket.
+        zarr_key (str): Key within the zarr file to access the dataset.
+        hdf5_path (str): Local path where the HDF5 file will be saved.
+        roi (tuple of slices): Region of interest to extract from the dataset.
+    """
+    # # Old defaults:
+    # size = (800,)*3
+    # roi = (
+    #     slice(50000//8, 50000//8 + size[2]),  # z
+    #     slice(25000//8, 25000//8 + size[1]),  # y
+    #     slice(28000//8, 28000//8 + size[0]),  # x
+    # )
+    # zarr_path = "janelia-cosem-datasets/jrc_mus-liver/jrc_mus-liver.zarr"
+    # zarr_key = "recon-1/em/fibsem-uint8/s0"
+    
+    fs = s3fs.S3FileSystem(anon=True)  # Or remove anon=True if you need credentials
+    # print("List: ", fs.ls("janelia-cosem-datasets/jrc_mus-liver/jrc_mus-liver.zarr/recon-1/em/fibsem-uint8/s0/")[:3])
+    store = zarr.storage.FSStore(zarr_path, fs=fs)
+    arr = zarr.open(store, mode='r', path=zarr_key)
+    print(arr.shape)
+
+    # ROIs in zarr order (usually z, y, x - check with arr.shape!)
+    roi_data = arr[roi]
+    with h5py.File(hdf5_path, 'w') as h5_file:
+        h5_file.create_dataset("raw", data=roi_data, compression="gzip")
 
 def extract_crops(path_to_zarr, raw_key, number_of_crops, crop_size, raw_roi = None, blacklist = None):
     """
@@ -173,6 +211,7 @@ def extract_labeled_sample(path_to_dataset, raw_roi, raw_key, label_key, print_p
 
     # get slices of raw, calculate slice for label if None
     np_slice = np.s_[raw_roi]
+    print("np_slice: ", np_slice)
     raw_crop = raw_dataset[np_slice]
     print("slice:         ", np_slice)
     print("raw size:      ", raw_dataset.shape)
@@ -338,151 +377,159 @@ def get_random_roi(original_roi, size, blacklist = None):
 
     raise RuntimeError(f"Could not find a valid ROI after {max_attempts} attempts for {size} in {original_roi}")
 
+def n5_to_hdf5(n5_path, hdf5_path):
+    """Convert N5 file to HDF5"""
+    print(f"Converting N5 to HDF5")
+    try:
+        print(f"Attempting conversion using z5py...")
+        with z5py.File(n5_path, 'r') as n5_file:
+            ds_names = list(n5_file.keys())
+            if not ds_names:
+                raise ValueError("No datasets found in N5 file.")
+            ds_name = ds_names[0]
+            n5_ds = n5_file[ds_name]
+            data = n5_ds[:]
+            
+            with h5py.File(hdf5_path, 'w') as h5_file:
+                h5_file.create_dataset(ds_name, data=data, compression="gzip")
+                
+            print(f"Successfully converted to HDF5: {hdf5_path}")
+            
+    except Exception as e:
+        print(f"Conversion  failed: {e}")
+        raise e
+
 if __name__ == "__main__":
-    n_crops = 1
-    n_crops_dim = 1 # !!! 2 -> 8, 3 -> 27, 4 -> 64   
-
-    data_path = "/scratch-grete/projects/nim00007/data/cellmap/datasets/janelia-cosem-datasets/jrc_mus-liver/jrc_mus-liver.zarr"
-    print_path_unlabeled = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/unlabeled_crops/"
-    base_path_labeled = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/labeled_crops/"
-    base_path_labels = "/user/niccolo.eccel/u15001/example_dataset/"
-    raw_key = "/recon-1/em/fibsem-uint8/s0/"
-    label_key = "/mito/s0/"
-    patch_shape = (512,)*3
-    train_roi = (  # Divide by 8 as coordinates are in nm and 1 px = 8nm
-        slice(35000/8, 50000/8), # x
-        slice(20000/8, 50000/8), # y
-        slice(30000/8, 80000/8), # z
-    )
-    selected_roi_1 = (   # 80825, 13486, 67009 - 66418, 32242, 56951
-        slice(6687, 8250, None), 
-        slice(1850, 4030, None), 
-        slice(8375, 10125, None),
-    )
-    selected_roi_2 = ( #  75397, 69836, 980 - 100677, 61274, 17697
-        slice(250, 1875, None),
-        slice(7375, 8912, None), 
-        slice(10000, 11875, None), 
-    )
+    with z5py.File("/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/ariadne_mito_instance.n5") as f:
+        center = [s // 2 for s in f['s0'].shape]
+        roi = (
+            slice(center[0] - 5, center[0] + 5),
+            slice(center[1] - 5, center[1] + 5),
+            slice(center[2] - 5, center[2] + 5),
+        )
+        data = f['s0'][roi]
+        print("Shape:", data.shape)
+        print("Data:\n", data)
+    # Create test ROI
+    size = (500,)*3
     test_roi = (
-        slice(28000/8, 35000/8), # x
-        slice(20000/8, 50000/8), # y
-        slice(30000/8, 80000/8), # z
-    )
-    
-    # Check that test has never been used
-    assert not slices_overlap(test_roi, train_roi)
-    assert not slices_overlap(test_roi, selected_roi_1)
-    assert not slices_overlap(test_roi, selected_roi_2)
-
-    blacklist = [
-        (   # crop 136         ("crop136", ([4424, 3507, 4562], [4624, 3707, 4762])), zyx
-            slice(4562, 4624),
-            slice(3507, 3707),
-            slice(4424, 4762),
-        ),
-        (   # crop 144         ("crop144", ([5006, 6090, 5704], [5106, 6190, 5804])), zyx
-            slice(5704, 5804), 
-            slice(6090, 6090),
-            slice(5006, 5106),
-        ),
-        (   # crop 124         ("crop124", ([43796, 36356, 76836], [45396, 37956, 78436])),
-            slice(9604, 9804),
-            slice(4544, 4744),
-            slice(5474, 5674),
-        ),
-        (   # crop 135         ("crop135", ([34620, 39036, 54876], [36220, 40636, 56476])),
-            slice(6859, 7059),
-            slice(4879, 5079),
-            slice(4327, 4527),
-        ),
-        (   # crop 139         ("crop139", ([36668, 46420, 72996], [37468, 47220, 73796])),
-            slice(9124, 9224),
-            slice(5802, 5902),
-            slice(4583, 4683),
-        ),
-        (   # crop 142         ("crop142", ([34804, 41124, 65884], [35604, 41924, 66684])),
-            slice(8235, 8335),
-            slice(5140, 5240),
-            slice(4350, 4450),
-        ),
-    ]
-    for b in blacklist:
-        assert not slices_overlap(test_roi, b)
-
-
-    data_voxel = [ # !!! Z Y X
-        ("crop124", ([5474, 4544, 9604], [5674, 4744, 9804])),
-        ("crop125", ([4015, 10412, 7608], [4215, 10612, 7808])),
-        ("crop131", ([2269, 2912, 2964], [2319, 3112, 3164])),
-        ("crop132", ([4442, 5715, 3321], [4642, 5915, 3521])),
-        ("crop133", ([4274, 7349, 5699], [4474, 7549, 5899])),
-        ("crop135", ([4327, 4879, 6859], [4527, 5079, 7059])), 
-        ("crop136", ([4424, 3507, 4562], [4624, 3707, 4762])),
-        ("crop137", ([6999, 4150, 9016], [7199, 4350, 9216])),
-        ("crop138", ([7999, 4599, 6499], [8199, 4799, 6699])),
-        ("crop139", ([4583, 5802, 9124], [4683, 5902, 9224])), 
-        ("crop142", ([4350, 5140, 8235], [4450, 5240, 8335])),
-        ("crop143", ([2634, 4952, 6474], [2734, 5052, 6574])),
-        ("crop144", ([5006, 6090, 5704], [5106, 6190, 5804])),
-        ("crop145", ([2194, 7718, 5793], [2374, 8093, 6168])),
-        ("crop150", ([4348, 2024, 9124], [4448, 2124, 9224])),
-        ("crop151", ([1696, 5187, 5592], [1796, 5287, 5692])),
-        ("crop157", ([8654, 4774, 2999], [8754, 4874, 3099])),
-        ("crop171", ([4468, 6596, 6780], [4668, 6658, 6980])),
-        ("crop172", ([2038, 7178, 4156], [2288, 7428, 4356])),
-        ("crop175", ([2042, 7252, 4619], [2442, 7402, 4919])),
-        ("crop177", ([799, 399, 399], [1599, 1199, 1199])),
-        ("crop183", ([8654, 4774, 2999], [8754, 4874, 3099])),
-        ("crop416", ([4468, 6596, 6780], [4668, 6658, 6980])),
-        ("crop417", ([2038, 7178, 4156], [2288, 7428, 4356])),
-    ]
-
-    name, ([z, y, x], [zz, yy, xx]) = data_voxel[-3]
-    raw_roi = (
-        slice(z, zz),
-        slice(y, yy),
-        slice(x, xx),
+        slice(28000//8, 28000//8 + size[0]),  # x
+        slice(25000//8, 25000//8 + size[1]),  # y
+        slice(50000//8, 50000//8 + size[2]),  # z
     )
 
-    # Create crops
-    # start = time.time()
-    # for crop in data_voxel:
-    #     name, ([z, y, x], [zz, yy, xx]) = crop
-    #     raw_roi = (
-    #         slice(z, zz),
-    #         slice(y, yy),
-    #         slice(x, xx),
-    #     )
-    #     print_path_labeled = f"{base_path_labeled}{name}.h5"
-    #     path_to_labels = f"{base_path_labels}{name}.zarr"
-    #     print("Creating ", print_path_labeled , f" from {x}, {y}, {z} (xyz) in {path_to_labels}")
-    #     # extract_samples(data_path, raw_key, n_crops, n_crops_dim, patch_shape, print_path_unlabeled, train_roi, blacklist)
-    #     extract_labeled_sample(data_path, raw_roi, raw_key, label_key, print_path_labeled, path_to_labels, label_roi = test_roi)
-    # end = time.time()
-    # print("Created ",n_crops ," samples in ", end - start, " seconds.")
+    # n_crops = 1
+    # n_crops_dim = 1 # !!! 2 -> 8, 3 -> 27, 4 -> 64   
 
-    label_key = ""
-    test_crop_path = f"{base_path_labels}mito_instance_seg.zarr"
-    print_test = f"{base_path_labeled}test_crop.h5"
-    extract_labeled_sample(data_path, test_roi, raw_key, label_key, print_test, )
+    # data_path = "/scratch-grete/projects/nim00007/data/cellmap/datasets/janelia-cosem-datasets/jrc_mus-liver/jrc_mus-liver.zarr"
+    # print_path_unlabeled = "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/unlabeled_crops/"
+    # base_path_labels = "/user/niccolo.eccel/u15001/example_dataset/"
+    # raw_key = "/recon-1/em/fibsem-uint8/s0/"
+    # label_key = "/mito/s0/"
+    # patch_shape = (1024,)*3
+    # train_roi = (  # Divide by 8 as coordinates are in nm and 1 px = 8nm
+    #     slice(35000/8, 50000/8), # x
+    #     slice(20000/8, 50000/8), # y
+    #     slice(30000/8, 80000/8), # z
+    # )
+    # selected_roi_1 = (   # 80825, 13486, 67009 - 66418, 32242, 56951
+    #     slice(6687, 8250, None), 
+    #     slice(1850, 4030, None), 
+    #     slice(8375, 10125, None),
+    # )
+    # selected_roi_2 = ( #  75397, 69836, 980 - 100677, 61274, 17697
+    #     slice(250, 1875, None),
+    #     slice(7375, 8912, None), 
+    #     slice(10000, 11875, None), 
+    # )
+    # test_roi = (
+    #     slice(28000/8, 35000/8), # x
+    #     slice(20000/8, 50000/8), # y
+    #     slice(30000/8, 80000/8), # z
+    # )
     
-    # Verifying which samples have mitochondria
-    
-    # good_samples = []
-    # for file in os.listdir("/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/labeled_crops/"):
-    #     path_to_file = f"/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/labeled_crops/{file}"
-    #     with h5py.File(path_to_file, 'r') as f:
-    #         try:
-    #             print(os.path.basename(path_to_file))
-    #             print("Rand element of labels: " + str(f["label_crop/mito"][40][40][40]))
-    #             if np.any(f["label_crop/mito"]):
-    #                 print("Labels ok")
-    #                 good_samples.append(file)
-    #             print()
-    #         except Exception as e:
-    #             print(os.path.basename(path_to_file), ": failed to open dataset mito: ", e)
-    # print()
-    # print("Good samples with mito: ")
-    # good_samples.sort()
-    # print(good_samples)
+    # # Check that test has never been used
+    # assert not slices_overlap(test_roi, train_roi)
+    # assert not slices_overlap(test_roi, selected_roi_1)
+    # assert not slices_overlap(test_roi, selected_roi_2)
+
+    # blacklist = [
+    #     (   # crop 136         ("crop136", ([4424, 3507, 4562], [4624, 3707, 4762])), zyx
+    #         slice(4562, 4624),
+    #         slice(3507, 3707),
+    #         slice(4424, 4762),
+    #     ),
+    #     (   # crop 144         ("crop144", ([5006, 6090, 5704], [5106, 6190, 5804])), zyx
+    #         slice(5704, 5804), 
+    #         slice(6090, 6090),
+    #         slice(5006, 5106),
+    #     ),
+    #     (   # crop 124         ("crop124", ([43796, 36356, 76836], [45396, 37956, 78436])),
+    #         slice(9604, 9804),
+    #         slice(4544, 4744),
+    #         slice(5474, 5674),
+    #     ),
+    #     (   # crop 135         ("crop135", ([34620, 39036, 54876], [36220, 40636, 56476])),
+    #         slice(6859, 7059),
+    #         slice(4879, 5079),
+    #         slice(4327, 4527),
+    #     ),
+    #     (   # crop 139         ("crop139", ([36668, 46420, 72996], [37468, 47220, 73796])),
+    #         slice(9124, 9224),
+    #         slice(5802, 5902),
+    #         slice(4583, 4683),
+    #     ),
+    #     (   # crop 142         ("crop142", ([34804, 41124, 65884], [35604, 41924, 66684])),
+    #         slice(8235, 8335),
+    #         slice(5140, 5240),
+    #         slice(4350, 4450),
+    #     ),
+    # ]
+    # for b in blacklist:
+    #     assert not slices_overlap(test_roi, b)
+
+
+    # data_voxel = [ # !!! Z Y X
+    #     ("crop124", ([5474, 4544, 9604], [5674, 4744, 9804])),
+    #     ("crop125", ([4015, 10412, 7608], [4215, 10612, 7808])),
+    #     ("crop131", ([2269, 2912, 2964], [2319, 3112, 3164])),
+    #     ("crop132", ([4442, 5715, 3321], [4642, 5915, 3521])),
+    #     ("crop133", ([4274, 7349, 5699], [4474, 7549, 5899])),
+    #     ("crop135", ([4327, 4879, 6859], [4527, 5079, 7059])), 
+    #     ("crop136", ([4424, 3507, 4562], [4624, 3707, 4762])),
+    #     ("crop137", ([6999, 4150, 9016], [7199, 4350, 9216])),
+    #     ("crop138", ([7999, 4599, 6499], [8199, 4799, 6699])),
+    #     ("crop139", ([4583, 5802, 9124], [4683, 5902, 9224])), 
+    #     ("crop142", ([4350, 5140, 8235], [4450, 5240, 8335])),
+    #     ("crop143", ([2634, 4952, 6474], [2734, 5052, 6574])),
+    #     ("crop144", ([5006, 6090, 5704], [5106, 6190, 5804])),
+    #     ("crop145", ([2194, 7718, 5793], [2374, 8093, 6168])),
+    #     ("crop150", ([4348, 2024, 9124], [4448, 2124, 9224])),
+    #     ("crop151", ([1696, 5187, 5592], [1796, 5287, 5692])),
+    #     ("crop157", ([8654, 4774, 2999], [8754, 4874, 3099])),
+    #     ("crop171", ([4468, 6596, 6780], [4668, 6658, 6980])),
+    #     ("crop172", ([2038, 7178, 4156], [2288, 7428, 4356])),
+    #     ("crop175", ([2042, 7252, 4619], [2442, 7402, 4919])),
+    #     ("crop177", ([799, 399, 399], [1599, 1199, 1199])),
+    #     ("crop183", ([8654, 4774, 2999], [8754, 4874, 3099])),
+    #     ("crop416", ([4468, 6596, 6780], [4668, 6658, 6980])),
+    #     ("crop417", ([2038, 7178, 4156], [2288, 7428, 4356])),
+    # ]
+
+    # name, ([z, y, x], [zz, yy, xx]) = data_voxel[-3]
+    # raw_roi = (
+    #     slice(z, zz),
+    #     slice(y, yy),
+    #     slice(x, xx),
+    # )
+
+    # label_key = ""
+    # test_crop_path = f"{base_path_labels}mito_instance_seg.zarr"
+    # print_test = "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/test_crop.h5"
+    # n5_path = "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/temp_inference.n5"
+    # # extract_labeled_sample(data_path, test_roi, raw_key, label_key, print_test, n5_path)
+
+    # import quilt3 as q3
+    # b = q3.Bucket("s3://janelia-cosem-datasets")
+    # b.fetch("jrc_mus-liver/jrc_mus-liver.n5/labels/ariadne/mito_instance_seg/", "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/temp_instance_seg.n5/")
+    # b.fetch("jrc_mus-liver/jrc_mus-liver.zarr/recon-1/labels/masks/evaluation/", "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/temp_evaluation.zarr/")
