@@ -295,8 +295,17 @@ def get_supervised_loader(
             raise NotImplementedError
         label_transform = torch_em.transform.label.connected_components
 
+    heavy_transforms = [
+        # "RandomAffine3D",         # Might cause information loss  
+        "RandomDepthicalFlip3D", 
+        "RandomHorizontalFlip3D", 
+        "RandomRotation3D", 
+        "RandomVerticalFlip3D", 
+        "RandomElasticDeformation3D"
+        ]
+
     transform = torch_em.transform.Compose(
-        torch_em.transform.PadIfNecessary(patch_shape), torch_em.transform.get_augmentations(3)
+        torch_em.transform.PadIfNecessary(patch_shape), torch_em.transform.get_augmentations(3, heavy_transforms)
     )
 
     num_workers = loader_kwargs.pop("num_workers", 4 * batch_size)
