@@ -35,6 +35,7 @@ if __name__ == "__main__":
     # Run inference
     #
 
+    os.makedirs(save_inference_path, exist_ok=True)
     # Run inference on test files
     for file in os.listdir(inference_path):
         print("Checking inference for ", file, " with ", model_name)
