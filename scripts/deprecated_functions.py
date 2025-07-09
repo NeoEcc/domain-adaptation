@@ -236,6 +236,289 @@ print("Good samples with mito: ")
 good_samples.sort()
 print(good_samples)
 
+# Extract test crops with inference
+#!/usr/bin/env python3
+"""
+Script to extract overlapping raw and label crops from datasets with different coordinate systems.
+
+Raw dataset: (8932, 12728, 12747) (zyx)
+Label dataset: (5000, 5000, 5000) (zyx)
+Label coordinates in raw space: 30984, 30912, 15728 - 70984, 70912, 55728 (xyz, nm, 8nm/pixel)
+"""
+
+import numpy as np
+import h5py
+import zarr
+import s3fs
+import z5py
+from typing import Tuple, Optional
+
+def h5_from_bucket(zarr_path, zarr_key, hdf5_path, roi):
+    """
+    Given the details in a bucket, downloads only the specified part of a dataset (roi) and
+    prints the dataset in an hdf5 file.
+    """
+    fs = s3fs.S3FileSystem(anon=True)
+    try:
+        # For Zarr files
+        store = zarr.storage.FSStore(zarr_path, fs=fs)
+        dataset = zarr.open(store, mode='r', path=zarr_key)
+        print(f"Successfully opened Zarr dataset: {dataset.shape}, dtype: {dataset.dtype}")
+        
+        # Extract roi
+        roi_data = dataset[roi]
+        print(f"ROI shape: {roi_data.shape}")
+        
+    except Exception as e:
+        print(f"Zarr processing failed: {e}")
+        raise
+    
+    # Save if path provided
+    if hdf5_path is not None:
+        import os
+        os.makedirs(os.path.dirname(hdf5_path), exist_ok=True)
+        with h5py.File(hdf5_path, 'w') as h5_file:
+            h5_file.create_dataset("data", data=roi_data, compression="gzip")
+            h5_file.attrs["source_path"] = zarr_path
+            h5_file.attrs["source_key"] = zarr_key
+            h5_file.attrs["roi"] = str(roi)
+        print(f"Saved to {hdf5_path}")
+    
+    return roi_data
+
+def n5_to_hdf5(n5_path, hdf5_path, roi=None):
+    """Convert N5 file to HDF5 with optional roi"""
+    print(f"Converting N5 to HDF5")
+    try:
+        with z5py.File(n5_path, 'r') as n5_file:
+            ds_names = list(n5_file.keys())
+            if not ds_names:
+                raise ValueError("No datasets found in N5 file.")
+            ds_name = ds_names[0]
+            n5_ds = n5_file[ds_name]
+            # ROI
+            if roi is not None:
+                data = n5_ds[roi]
+                print("Shape: ", n5_ds.shape, " - after ROI: ", data.shape)
+            else:
+                data = n5_ds[:]
+                print("Shape: ", data.shape)
+            
+            if hdf5_path is not None:
+                import os
+                os.makedirs(os.path.dirname(hdf5_path), exist_ok=True)
+                with h5py.File(hdf5_path, 'w') as h5_file:
+                    h5_file.create_dataset(ds_name, data=data, compression="gzip")
+                
+            print(f"Successfully converted to HDF5: {hdf5_path}")
+            return data
+    except Exception as e:
+        try:
+            print(f"Conversion failed first time: {e}")
+            n5_store = zarr.N5Store(n5_path)
+            group = zarr.open(n5_store, mode='r')
+            # Recursively find the first array
+            if isinstance(group, zarr.Array):
+                print("Group shape: ", group.shape)
+                if roi is not None:
+                    data = group[roi]
+                    print("Reduced shape: ", data.shape)
+                else:
+                    data = group[:]
+                if hdf5_path is not None:
+                    import os
+                    os.makedirs(os.path.dirname(hdf5_path), exist_ok=True)
+                    with h5py.File(hdf5_path, 'w') as h5_file:
+                        h5_file.create_dataset("data", data=data, compression="gzip")
+                
+            print(f"Successfully converted to HDF5: {hdf5_path}")
+            return data
+        except Exception as e2:
+            print("Failed to convert twice: ", e, e2)
+            raise e2
+
+def nm_to_voxel(nm_coords: Tuple[int, int, int], voxel_size: int = 8) -> Tuple[int, int, int]:
+    """Convert nanometer coordinates to voxel coordinates"""
+    return tuple(coord // voxel_size for coord in nm_coords)
+
+def xyz_to_zyx(xyz_coords: Tuple[int, int, int]) -> Tuple[int, int, int]:
+    """Convert XYZ coordinates to ZYX coordinates"""
+    return (xyz_coords[2], xyz_coords[1], xyz_coords[0])
+
+def create_overlapping_roi(raw_shape: Tuple[int, int, int], 
+                          label_shape: Tuple[int, int, int],
+                          label_start_xyz_nm: Tuple[int, int, int],
+                          label_end_xyz_nm: Tuple[int, int, int],
+                          crop_size: Tuple[int, int, int],
+                          voxel_size: int = 8) -> Tuple[Tuple[slice, ...], Tuple[slice, ...]]:
+    """
+    Create ROIs for both raw and label datasets that overlap in the same physical space.
+    
+    Args:
+        raw_shape: Shape of raw dataset (z, y, x)
+        label_shape: Shape of label dataset (z, y, x)  
+        label_start_xyz_nm: Start coordinates of label in raw space (x, y, z) in nm
+        label_end_xyz_nm: End coordinates of label in raw space (x, y, z) in nm
+        crop_size: Desired crop size (z, y, x)
+        voxel_size: Voxel size in nm
+        
+    Returns:
+        Tuple of (raw_roi, label_roi)
+    """
+    
+    # Convert nm coordinates to voxel coordinates
+    label_start_voxel = nm_to_voxel(label_start_xyz_nm, voxel_size)
+    label_end_voxel = nm_to_voxel(label_end_xyz_nm, voxel_size)
+    
+    # Convert XYZ to ZYX for array indexing
+    label_start_zyx = xyz_to_zyx(label_start_voxel)
+    label_end_zyx = xyz_to_zyx(label_end_voxel)
+    
+    print(f"Raw dataset shape (ZYX): {raw_shape}")
+    print(f"Label dataset shape (ZYX): {label_shape}")
+    print(f"Label region in raw space (ZYX voxels): {label_start_zyx} to {label_end_zyx}")
+    
+    # Calculate the overlap region dimensions
+    overlap_size = tuple(end - start for start, end in zip(label_start_zyx, label_end_zyx))
+    print(f"Label region size (ZYX): {overlap_size}")
+    
+    # Ensure crop size fits within both datasets
+    max_crop_size = []
+    for i, (raw_dim, label_dim, overlap_dim) in enumerate(zip(raw_shape, label_shape, overlap_size)):
+        max_size = min(raw_dim, label_dim, overlap_dim, crop_size[i])
+        max_crop_size.append(max_size)
+    
+    final_crop_size = tuple(max_crop_size)
+    print(f"Final crop size (ZYX): {final_crop_size}")
+    
+    # Choose a random position within the overlap region for the crop
+    import random
+    crop_start_raw = []
+    crop_start_label = []
+    
+    for i in range(3):
+        # Maximum starting position in raw coordinates
+        max_start_raw = label_end_zyx[i] - final_crop_size[i]
+        min_start_raw = label_start_zyx[i]
+        
+        if max_start_raw < min_start_raw:
+            raise ValueError(f"Crop size {final_crop_size[i]} is too large for dimension {i}")
+        
+        # Random start position in raw coordinates
+        start_raw = random.randint(min_start_raw, max_start_raw)
+        crop_start_raw.append(start_raw)
+        
+        # Corresponding start position in label coordinates
+        start_label = start_raw - label_start_zyx[i]
+        crop_start_label.append(start_label)
+    
+    # Create ROIs
+    raw_roi = tuple(slice(start, start + size) for start, size in zip(crop_start_raw, final_crop_size))
+    label_roi = tuple(slice(start, start + size) for start, size in zip(crop_start_label, final_crop_size))
+    
+    print(f"Raw ROI (ZYX): {raw_roi}")
+    print(f"Label ROI (ZYX): {label_roi}")
+    
+    return raw_roi, label_roi
+
+def extract_overlapping_crops(raw_shape: Tuple[int, int, int] = (8932, 12728, 12747),
+                             label_shape: Tuple[int, int, int] = (5000, 5000, 5000),
+                             label_start_xyz_nm: Tuple[int, int, int] = (30984, 30912, 15728),
+                             label_end_xyz_nm: Tuple[int, int, int] = (70984, 70912, 55728),
+                             crop_size: Tuple[int, int, int] = (1024,)*3,
+                             output_dir: str = "./files/overlapping_crops/",
+                             crop_name: str = "overlap_crop"):
+    """
+    Extract overlapping crops from raw and label datasets.
+    """
+    import os
+    
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Calculate ROIs
+    raw_roi, label_roi = create_overlapping_roi(
+        raw_shape, label_shape, label_start_xyz_nm, label_end_xyz_nm, crop_size
+    )
+    
+    # Extract raw crop
+    print("\nExtracting raw crop...")
+    raw_output_path = os.path.join(output_dir, f"{crop_name}_raw.h5")
+    raw_data = h5_from_bucket(
+        "janelia-cosem-datasets/jrc_mus-liver/jrc_mus-liver.zarr", 
+        "recon-1/em/fibsem-uint8/s0", 
+        raw_output_path, 
+        raw_roi
+    )
+    
+    # Extract label crop
+    print("\nExtracting label crop...")
+    label_output_path = os.path.join(output_dir, f"{crop_name}_labels.h5")
+    label_data = n5_to_hdf5(
+        "./files/mito_bag_seg.n5/", 
+        label_output_path, 
+        label_roi
+    )
+    
+    # Create combined file
+    print("\nCreating combined file...")
+    combined_output_path = os.path.join(output_dir, f"{crop_name}_combined.h5")
+    with h5py.File(combined_output_path, 'w') as h5_file:
+        h5_file.create_dataset("raw", data=raw_data, compression="gzip")
+        h5_file.create_dataset("labels", data=label_data, compression="gzip")
+        h5_file.attrs["voxel_size"] = (8, 8, 8)
+        h5_file.attrs["raw_roi"] = str(raw_roi)
+        h5_file.attrs["label_roi"] = str(label_roi)
+        h5_file.attrs["label_region_xyz_nm"] = f"{label_start_xyz_nm} to {label_end_xyz_nm}"
+        h5_file.attrs["source_raw"] = "janelia-cosem-datasets/jrc_mus-liver/jrc_mus-liver.zarr"
+        h5_file.attrs["source_labels"] = "./files/mito_bag_seg.n5/"
+    
+    print(f"Combined file saved to: {combined_output_path}")
+    print(f"Raw crop shape: {raw_data.shape}")
+    print(f"Label crop shape: {label_data.shape}")
+    
+    return raw_data, label_data, raw_roi, label_roi
+
+def verify_overlap(raw_roi, label_roi, label_start_xyz_nm, voxel_size=8):
+    """Verify that the crops actually overlap in physical space"""
+    label_start_zyx = xyz_to_zyx(nm_to_voxel(label_start_xyz_nm, voxel_size))
+    
+    # Convert label ROI to raw coordinate system
+    label_roi_in_raw = tuple(
+        slice(label_slice.start + label_start_zyx[i], 
+              label_slice.stop + label_start_zyx[i])
+        for i, label_slice in enumerate(label_roi)
+    )
+    
+    print(f"\nVerification:")
+    print(f"Raw ROI: {raw_roi}")
+    print(f"Label ROI in raw coordinates: {label_roi_in_raw}")
+    
+    # Check if they're identical (they should be for overlapping crops)
+    overlap_verified = all(
+        raw_slice.start == label_slice.start and raw_slice.stop == label_slice.stop
+        for raw_slice, label_slice in zip(raw_roi, label_roi_in_raw)
+    )
+    
+    print(f"Overlap verified: {overlap_verified}")
+    return overlap_verified
+
+if __name__ == "__main__":
+    # Set random seed for reproducibility
+    import random
+    random.seed(42)
+    
+    # Extract overlapping crops
+    print("Extracting overlapping crops...")
+    raw_data, label_data, raw_roi, label_roi = extract_overlapping_crops()
+    
+    # Verify overlap
+    verify_overlap(raw_roi, label_roi, (30984, 30912, 15728))
+    
+    print("Finished extracting crops")
+
+
+
 # Mitochondria download
 from utils import get_filtered_from_bucket, get_folder_parallel
 
