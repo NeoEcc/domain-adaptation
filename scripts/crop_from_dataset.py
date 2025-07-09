@@ -379,7 +379,9 @@ def get_random_roi(original_roi, size, blacklist = None):
     raise RuntimeError(f"Could not find a valid ROI after {max_attempts} attempts for {size} in {original_roi}")
 
 def n5_to_hdf5(n5_path, hdf5_path, roi = None):
-    """Convert N5 file to HDF5 with optional roi"""
+    """Convert N5 file to HDF5 with optional roi
+        Works only with single arrays
+    """
     print(f"Converting N5 to HDF5")
     try:
         with z5py.File(n5_path, 'r') as n5_file:
@@ -391,16 +393,38 @@ def n5_to_hdf5(n5_path, hdf5_path, roi = None):
             # ROI
             if roi is not None:
                 data = n5_ds[roi]
+                print("Shape: ", n5_ds.shape, " - after ROI: ", data.shape)
             else:
-                data = n5_ds[:]        
-            with h5py.File(hdf5_path, 'w') as h5_file:
-                h5_file.create_dataset(ds_name, data=data, compression="gzip")
+                data = n5_ds[:]
+                print("Shape: ", data.shape)  
+            if hdf5_path is not None:      
+                with h5py.File(hdf5_path, 'w') as h5_file:
+                    h5_file.create_dataset(ds_name, data=data, compression="gzip")
                 
             print(f"Successfully converted to HDF5: {hdf5_path}")
-            
+            return data
     except Exception as e:
-        print(f"Conversion  failed: {e}")
-        raise e
+        try:
+            print(f"Conversion failed first time: {e}")
+            n5_store = zarr.N5Store(n5_path)
+            group = zarr.open(n5_store, mode='r')
+            # Recursively find the first array
+            if isinstance(group, zarr.Array):
+                print("Group shape: ", group.shape)
+                if roi is not None:
+                    data = group[roi]
+                    print("Reduced shape: ", data.shape)
+                else:
+                    data = group[:]
+                if hdf5_path is not None:
+                    with h5py.File(hdf5_path, 'w') as h5_file:
+                        h5_file.create_dataset(ds_name, data=data, compression="gzip")
+                
+            print(f"Successfully converted to HDF5: {hdf5_path}")
+            return data
+        except Exception as e2:
+            print("Failed to convert twice: ", e, e2)
+            raise e2
 
 if __name__ == "__main__":
     # Create test ROI
