@@ -26,26 +26,30 @@ def h5_from_bucket(zarr_path, zarr_key, hdf5_path, roi):
         hdf5_path (str): Local path where the HDF5 file will be saved.
         roi (tuple of slices): Region of interest to extract from the dataset.
     """
-    # # Old defaults:
-    # size = (800,)*3
-    # roi = (
-    #     slice(50000//8, 50000//8 + size[2]),  # z
-    #     slice(25000//8, 25000//8 + size[1]),  # y
-    #     slice(28000//8, 28000//8 + size[0]),  # x
-    # )
-    # zarr_path = "janelia-cosem-datasets/jrc_mus-liver/jrc_mus-liver.zarr"
-    # zarr_key = "recon-1/em/fibsem-uint8/s0"
-    
-    fs = s3fs.S3FileSystem(anon=True)  # Or remove anon=True if you need credentials
-    # print("List: ", fs.ls("janelia-cosem-datasets/jrc_mus-liver/jrc_mus-liver.zarr/recon-1/em/fibsem-uint8/s0/")[:3])
-    store = zarr.storage.FSStore(zarr_path, fs=fs)
-    arr = zarr.open(store, mode='r', path=zarr_key)
-    print(arr.shape)
-
-    # ROIs in zarr order (usually z, y, x - check with arr.shape!)
-    roi_data = arr[roi]
-    with h5py.File(hdf5_path, 'w') as h5_file:
-        h5_file.create_dataset("raw", data=roi_data, compression="gzip")
+    fs = s3fs.S3FileSystem(anon=True)
+    try:
+        # For Zarr files
+        store = zarr.storage.FSStore(zarr_path, fs=fs)
+        dataset = zarr.open(store, mode='r', path=zarr_key)
+        print(f"Successfully opened Zarr dataset: {dataset.shape}, dtype: {dataset.dtype}")
+        
+        # Extract roi
+        roi_data = dataset[roi]
+        print(f"Shape: {roi_data.shape}")
+        
+    except Exception as e:
+        print(f"Zarr processing failed: {e}")
+        raise
+    # Save
+    if hdf5_path is not None:
+        os.makedirs(os.path.dirname(hdf5_path), exist_ok=True)
+        with h5py.File(hdf5_path, 'w') as h5_file:
+            h5_file.create_dataset("data", data=roi_data, compression="gzip")
+            h5_file.attrs["source_path"] = zarr_path
+            h5_file.attrs["source_key"] = zarr_key
+            h5_file.attrs["roi"] = str(roi)
+        print(f"Saved to {hdf5_path}")
+    return roi_data
 
 def extract_crops(path_to_zarr, raw_key, number_of_crops, crop_size, raw_roi = None, blacklist = None):
     """
@@ -80,7 +84,6 @@ def extract_crops(path_to_zarr, raw_key, number_of_crops, crop_size, raw_roi = N
     margin = 5
     if raw_roi is None:
         raw_roi = tuple(slice(margin, s - margin) for s in size)
-    # TODO: check if this is correct
     elif any((raw_roi[s].start > size[s] for s in range(ndim))):
         raise ValueError(f"ROI is outside the crop: {raw_roi} vs {size}")
     elif any((raw_roi[s].stop > size[s] for s in range(ndim))):
@@ -170,8 +173,6 @@ def extract_samples(path_to_zarr, data_key, crop_number, crops_per_batch_dim, cr
                 f.attrs["voxel_size"] = (8,8,8)
                 f.attrs["coordinates"] = jsonable_coordinates
                 f.attrs["source_dataset"] = "https://open.quiltdata.com/b/janelia-cosem-datasets/tree/jrc_mus-liver/"
-                # for keys, values in zip(f.attrs.keys(), f.attrs.values()):
-                #     print(keys, ": ", values)
         print("Batch created. Current crops created: ", generated_crops)
 
 def extract_labeled_sample(path_to_dataset, raw_roi, raw_key, label_key, print_path, path_to_labels = None, label_roi = None):
@@ -377,19 +378,21 @@ def get_random_roi(original_roi, size, blacklist = None):
 
     raise RuntimeError(f"Could not find a valid ROI after {max_attempts} attempts for {size} in {original_roi}")
 
-def n5_to_hdf5(n5_path, hdf5_path):
-    """Convert N5 file to HDF5"""
+def n5_to_hdf5(n5_path, hdf5_path, roi = None):
+    """Convert N5 file to HDF5 with optional roi"""
     print(f"Converting N5 to HDF5")
     try:
-        print(f"Attempting conversion using z5py...")
         with z5py.File(n5_path, 'r') as n5_file:
             ds_names = list(n5_file.keys())
             if not ds_names:
                 raise ValueError("No datasets found in N5 file.")
             ds_name = ds_names[0]
             n5_ds = n5_file[ds_name]
-            data = n5_ds[:]
-            
+            # ROI
+            if roi is not None:
+                data = n5_ds[roi]
+            else:
+                data = n5_ds[:]        
             with h5py.File(hdf5_path, 'w') as h5_file:
                 h5_file.create_dataset(ds_name, data=data, compression="gzip")
                 
@@ -400,23 +403,48 @@ def n5_to_hdf5(n5_path, hdf5_path):
         raise e
 
 if __name__ == "__main__":
-    with z5py.File("/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/ariadne_mito_instance.n5") as f:
-        center = [s // 2 for s in f['s0'].shape]
-        roi = (
-            slice(center[0] - 5, center[0] + 5),
-            slice(center[1] - 5, center[1] + 5),
-            slice(center[2] - 5, center[2] + 5),
-        )
-        data = f['s0'][roi]
-        print("Shape:", data.shape)
-        print("Data:\n", data)
     # Create test ROI
-    size = (500,)*3
-    test_roi = (
-        slice(28000//8, 28000//8 + size[0]),  # x
-        slice(25000//8, 25000//8 + size[1]),  # y
-        slice(50000//8, 50000//8 + size[2]),  # z
+    size = (1000,)*3  # Smaller size for testing
+    train_roi = (  # Divide by 8 as coordinates are in nm and 1 px = 8nm
+        slice(35000/8, 50000/8), # x
+        slice(20000/8, 50000/8), # y
+        slice(30000/8, 80000/8), # z
     )
+    selected_roi_1 = (   # 80825, 13486, 67009 - 66418, 32242, 56951
+        slice(6687, 8250, None), 
+        slice(1850, 4030, None), 
+        slice(8375, 10125, None),
+    )
+    selected_roi_2 = ( #  75397, 69836, 980 - 100677, 61274, 17697
+        slice(250, 1875, None),
+        slice(7375, 8912, None), 
+        slice(10000, 11875, None), 
+    )
+    full_test_roi = (
+        slice(28000/8, 35000/8), # x
+        slice(20000/8, 50000/8), # y
+        slice(30000/8, 80000/8), # z
+    )
+    test_roi = (
+        slice(30000//8, 30000//8 + size[0]),  # x
+        slice(30000//8, 30000//8 + size[1]),  # y
+        slice(55000//8, 55000//8 + size[2]),  # z
+    )
+    # Check that test has never been used
+    assert not slices_overlap(test_roi, train_roi)
+    assert not slices_overlap(test_roi, selected_roi_1)
+    assert not slices_overlap(test_roi, selected_roi_2)
+    assert slices_overlap(test_roi, full_test_roi)
+
+    print("zarr-mito_seg")
+    h5_from_bucket("janelia-cosem-datasets/jrc_mus-liver/jrc_mus-liver.zarr", "recon-1/labels/masks/evaluation", "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/test_labels_L.h5", test_roi)
+    print("zarr-raw")
+    h5_from_bucket("janelia-cosem-datasets/jrc_mus-liver/jrc_mus-liver.zarr", "recon-1/em/fibsem-uint8/s0", "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/test_crop_L.h5", test_roi)
+
+    print("n5-mito_seg")
+    h5_from_bucket("janelia-cosem-datasets/jrc_mus-liver/jrc_mus-liver.n5", "labels/mito_seg/s0", None, test_roi)
+    print("n5-mito_bag_seg")
+    h5_from_bucket("janelia-cosem-datasets/jrc_mus-liver/jrc_mus-liver.n5", "labels/ariadne/mito_bag_seg", None, test_roi)
 
     # n_crops = 1
     # n_crops_dim = 1 # !!! 2 -> 8, 3 -> 27, 4 -> 64   
@@ -427,66 +455,42 @@ if __name__ == "__main__":
     # raw_key = "/recon-1/em/fibsem-uint8/s0/"
     # label_key = "/mito/s0/"
     # patch_shape = (1024,)*3
-    # train_roi = (  # Divide by 8 as coordinates are in nm and 1 px = 8nm
-    #     slice(35000/8, 50000/8), # x
-    #     slice(20000/8, 50000/8), # y
-    #     slice(30000/8, 80000/8), # z
-    # )
-    # selected_roi_1 = (   # 80825, 13486, 67009 - 66418, 32242, 56951
-    #     slice(6687, 8250, None), 
-    #     slice(1850, 4030, None), 
-    #     slice(8375, 10125, None),
-    # )
-    # selected_roi_2 = ( #  75397, 69836, 980 - 100677, 61274, 17697
-    #     slice(250, 1875, None),
-    #     slice(7375, 8912, None), 
-    #     slice(10000, 11875, None), 
-    # )
-    # test_roi = (
-    #     slice(28000/8, 35000/8), # x
-    #     slice(20000/8, 50000/8), # y
-    #     slice(30000/8, 80000/8), # z
-    # )
     
-    # # Check that test has never been used
-    # assert not slices_overlap(test_roi, train_roi)
-    # assert not slices_overlap(test_roi, selected_roi_1)
-    # assert not slices_overlap(test_roi, selected_roi_2)
 
-    # blacklist = [
-    #     (   # crop 136         ("crop136", ([4424, 3507, 4562], [4624, 3707, 4762])), zyx
-    #         slice(4562, 4624),
-    #         slice(3507, 3707),
-    #         slice(4424, 4762),
-    #     ),
-    #     (   # crop 144         ("crop144", ([5006, 6090, 5704], [5106, 6190, 5804])), zyx
-    #         slice(5704, 5804), 
-    #         slice(6090, 6090),
-    #         slice(5006, 5106),
-    #     ),
-    #     (   # crop 124         ("crop124", ([43796, 36356, 76836], [45396, 37956, 78436])),
-    #         slice(9604, 9804),
-    #         slice(4544, 4744),
-    #         slice(5474, 5674),
-    #     ),
-    #     (   # crop 135         ("crop135", ([34620, 39036, 54876], [36220, 40636, 56476])),
-    #         slice(6859, 7059),
-    #         slice(4879, 5079),
-    #         slice(4327, 4527),
-    #     ),
-    #     (   # crop 139         ("crop139", ([36668, 46420, 72996], [37468, 47220, 73796])),
-    #         slice(9124, 9224),
-    #         slice(5802, 5902),
-    #         slice(4583, 4683),
-    #     ),
-    #     (   # crop 142         ("crop142", ([34804, 41124, 65884], [35604, 41924, 66684])),
-    #         slice(8235, 8335),
-    #         slice(5140, 5240),
-    #         slice(4350, 4450),
-    #     ),
-    # ]
-    # for b in blacklist:
-    #     assert not slices_overlap(test_roi, b)
+    blacklist = [
+        (   # crop 136         ("crop136", ([4424, 3507, 4562], [4624, 3707, 4762])), zyx
+            slice(4562, 4624),
+            slice(3507, 3707),
+            slice(4424, 4762),
+        ),
+        (   # crop 144         ("crop144", ([5006, 6090, 5704], [5106, 6190, 5804])), zyx
+            slice(5704, 5804), 
+            slice(6090, 6090),
+            slice(5006, 5106),
+        ),
+        (   # crop 124         ("crop124", ([43796, 36356, 76836], [45396, 37956, 78436])),
+            slice(9604, 9804),
+            slice(4544, 4744),
+            slice(5474, 5674),
+        ),
+        (   # crop 135         ("crop135", ([34620, 39036, 54876], [36220, 40636, 56476])),
+            slice(6859, 7059),
+            slice(4879, 5079),
+            slice(4327, 4527),
+        ),
+        (   # crop 139         ("crop139", ([36668, 46420, 72996], [37468, 47220, 73796])),
+            slice(9124, 9224),
+            slice(5802, 5902),
+            slice(4583, 4683),
+        ),
+        (   # crop 142         ("crop142", ([34804, 41124, 65884], [35604, 41924, 66684])),
+            slice(8235, 8335),
+            slice(5140, 5240),
+            slice(4350, 4450),
+        ),
+    ]
+    for b in blacklist:
+        assert not slices_overlap(test_roi, b), "Ok"
 
 
     # data_voxel = [ # !!! Z Y X
