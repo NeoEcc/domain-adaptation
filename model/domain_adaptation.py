@@ -7,10 +7,10 @@ from sklearn.model_selection import train_test_split
 from UNet import model
 
 # Domain adaptation modes - comment or uncomment to select
-# domain_adaptation_mode = "one-step"
+domain_adaptation_mode = "one-step"
     # One step uses the source domain in the labeled data and target domain in the unlabeled data to train a model from scratch.
     # Performs pure semi-supervised training
-domain_adaptation_mode = "two-steps"
+# domain_adaptation_mode = "two-steps"
     # Two steps uses the source domain labeled data to train a model, 
     # and unlabeled and few labeled data from the target domain to refine the same model. 
 
@@ -19,7 +19,7 @@ domain_adaptation_mode = "two-steps"
 #
 # Hyperparameters
 #
-patch_shape = (128,)*3
+patch_shape = (160,)*3
 lr = 1.0e-4
 val_split = 0.15
 batch_size = 1
@@ -64,6 +64,7 @@ elif domain_adaptation_mode == "one-step":
     unlabeled_train_paths, unlabeled_val_paths = train_test_split(unlabeled_data_paths, test_size = val_split, random_state = 42)
     labeled_train_paths, labeled_val_paths = train_test_split(labeled_data_paths, test_size = val_split, random_state = 42)
     # Make sure not to load any model
+    # TODO, as an extra: change this check to allow to load a past model from this same method, check if "one-step" is in the name
     best_path = None
 else:
     raise ValueError(f"Expected 'one-step' or 'two-steps', got {domain_adaptation_mode}")
@@ -83,5 +84,5 @@ if __name__ == "__main__":
         load_path = best_path,
         batch_size = batch_size,
         lr = lr,
-        n_iterations = 250000
+        n_iterations = 500000
     )

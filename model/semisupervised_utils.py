@@ -64,7 +64,6 @@ def get_unsupervised_loader(
     patch_shape: Tuple[int, int, int],
     batch_size: int,
     n_samples_epoch: Optional[int],
-    target_shape: Optional[Tuple[int, int, int]] = (128, 128, 128),
     # roi = None,
     # blacklist_roi = None,
 ) -> torch.utils.data.DataLoader:
@@ -97,7 +96,7 @@ def get_unsupervised_loader(
     # HDF5 version
     # Each sample is 512x. Must extract 64 128x crops from each.
     crops_shape = (slice(0,512),)*3
-    rois = get_sub_rois(crops_shape, target_shape)
+    rois = get_sub_rois(crops_shape, patch_shape)
     
     # Calculate samples per dataset
     total_datasets = len(data_paths) * len(rois)
@@ -123,9 +122,8 @@ def get_unsupervised_loader(
     #     for _ in range(n_samples_epoch)
     # ]
     ds = torch.utils.data.ConcatDataset(datasets)
-
     
-    num_workers = 4 * batch_size
+    num_workers = 2 * batch_size
     loader = torch_em.segmentation.get_data_loader(ds, batch_size=batch_size, num_workers=num_workers, shuffle=True)
     return loader
 
