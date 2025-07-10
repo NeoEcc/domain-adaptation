@@ -178,7 +178,6 @@ def semisupervised_training(
                                          n_samples=n_samples_train)
     val_loader = get_supervised_loader(val_paths[0], raw_key, label_key, patch_shape, batch_size,
                                        n_samples=n_samples_val)
-    print("Paths for training: ", len(train_paths[1]), " batch size: ", batch_size, " n_samples: ", n_samples_train)
     unsupervised_train_loader = get_unsupervised_loader(train_paths[1], raw_key, patch_shape, batch_size,
                                                         n_samples_epoch=n_samples_train)
     unsupervised_val_loader = get_unsupervised_loader(val_paths[1], raw_key, patch_shape, batch_size,

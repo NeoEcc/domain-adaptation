@@ -72,6 +72,7 @@ else:
 
 if __name__ == "__main__":
     model.train()
+    print("Training model ", new_model_name, " with patch shape ", patch_shape, " and batch size ", batch_size)
     semisupervised_training(
         name = new_model_name, 
         model = model, 
