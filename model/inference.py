@@ -2,9 +2,12 @@ import os
 
 from torch_em.util import load_model
 from model_utils import check_inference, test_inference_loss
-from UNet import model, model_name
+from UNet import model
 
 # Keys for raw data and for labels
+# model_name = "AUNet-128-1-one-step-DA"
+model_name = "AUNet-128-1-two-steps-DA"
+# model_name = "Source-AUNet-128-1"
 data_key = "raw_crop"
 label_key = "label_crop/mito"
 block_size = (90,)*3
