@@ -294,14 +294,16 @@ def get_supervised_loader(
         if ignore_label is not None:
             raise NotImplementedError
         label_transform = torch_em.transform.label.connected_components
+        # There is also connected_components_with_boundaries
 
     heavy_transforms = [
-        # "RandomAffine3D",         # Might cause information loss  
+        "RandomAffine3D",         # Might cause information loss  
         "RandomDepthicalFlip3D", 
         "RandomHorizontalFlip3D", 
         "RandomRotation3D", 
         "RandomVerticalFlip3D", 
-        "RandomElasticDeformation3D"
+        # "RandomElasticDeformation3D"  # Does not work despite being in the list
+        # "RandomElasticDeformationStacked" # Does not work either despite passing the assertion
         ]
 
     transform = torch_em.transform.Compose(
@@ -315,7 +317,7 @@ def get_supervised_loader(
         # sampler = torch_em.data.sampler.MinInstanceSampler(min_num_instances=4)
         # This is the default, but will never work with this dataset; using the only value that works
         # (1) would make it useless.
-        sampler = torch_em.data.sampler.MinForegroundSampler(0.01, 0.999)
+        sampler = torch_em.data.sampler.MinForegroundSampler(0.005, 0.999)
 
     loader = torch_em.default_segmentation_loader(
         data_paths, raw_key,
