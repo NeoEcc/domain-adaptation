@@ -64,6 +64,7 @@ def get_unsupervised_loader(
     patch_shape: Tuple[int, int, int],
     batch_size: int,
     n_samples_epoch: Optional[int],
+    target_shape: Optional[Tuple[int, int, int]] = (128, 128, 128),
     # roi = None,
     # blacklist_roi = None,
 ) -> torch.utils.data.DataLoader:
@@ -96,7 +97,6 @@ def get_unsupervised_loader(
     # HDF5 version
     # Each sample is 512x. Must extract 64 128x crops from each.
     crops_shape = (slice(0,512),)*3
-    target_shape = (128,)*3
     rois = get_sub_rois(crops_shape, target_shape)
     
     # Calculate samples per dataset
@@ -180,7 +180,7 @@ def semisupervised_training(
                                          n_samples=n_samples_train)
     val_loader = get_supervised_loader(val_paths[0], raw_key, label_key, patch_shape, batch_size,
                                        n_samples=n_samples_val)
-
+    print("Paths for training: ", len(train_paths[1]), " batch size: ", batch_size, " n_samples: ", n_samples_train)
     unsupervised_train_loader = get_unsupervised_loader(train_paths[1], raw_key, patch_shape, batch_size,
                                                         n_samples_epoch=n_samples_train)
     unsupervised_val_loader = get_unsupervised_loader(val_paths[1], raw_key, patch_shape, batch_size,
