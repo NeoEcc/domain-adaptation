@@ -10,13 +10,50 @@ from torch_em.loss.dice import dice_score
 from sklearn.model_selection import train_test_split
 from shutil import copyfile
 from torchmetrics import JaccardIndex 
+from skimage import morphology
+from scipy.ndimage import label
+import napari_segment_blobs_and_things_with_membranes as nsbatwm
 
+
+def postprocess_prediction(foreground, boundaries = None, threshold=0.8, instance_separation = True):
+    """
+    Postprocess the prediction by thresholding and optionally separating instances.
+    Args:
+        prediction (torch.Tensor): The model's prediction tensor.
+        threshold (float, optional): Threshold for binarization. Defaults to 0.5.
+        instance_separation (bool, optional): Whether to separate instances. Defaults to False.
+    Returns:
+        torch.Tensor: The postprocessed prediction tensor.
+    """
+    boundaries = None
+    # Binarize the prediction
+    prediction = (foreground > threshold)
+    prediction = morphology.remove_small_holes(prediction, 256)
+    prediction = morphology.remove_small_objects(prediction, 64)
+    if boundaries is not None and instance_separation:
+        # TODO: Remove boundaries, later add them back and expand the 
+        # labels for ideal instance segmentation
+        # TODO: evaluate if this is worth doing or not
+        boundaries = (boundaries > threshold)
+        diff = torch.logical_and(foreground, torch.logical_not(boundaries))
+        prediction = nsbatwm.label(diff, connectivity=1)
+        
+    prediction = morphology.binary_opening(prediction, None)
+    if instance_separation:
+        # Separate and label
+        # prediction = nsbatwm.split_touching_objects(prediction, sigma = 50)
+        prediction_bool = prediction.astype(bool)
+        prediction, num = label(prediction_bool)
+        print("Instances separated: ", num) 
+    
+    return prediction.astype(float)
+    
 
 def check_inference(model, path_to_file, path_to_dest, original_shape = (128,)*3, block_size = (96,)*3, halo = (16,)*3, 
-                    raw_key = "raw_crop", test_function = None, label_key = "labels/mito"):
+                    raw_key = "raw_crop", test_function = None, label_key = "labels/mito", postprocess = False):
     """
     Perform inference using a given model on data from an HDF5 file and save the results 
-    to a new HDF5 file appending the inference results (e.g., "foreground" and "boundaries")
+    to a new HDF5 file appending the inference results ("foreground" and "boundaries")
     to the new file.
     If the test function and label key is given, it returns the test metric.
     Args:
@@ -66,6 +103,7 @@ def check_inference(model, path_to_file, path_to_dest, original_shape = (128,)*3
             gpu_ids = [torch.cuda.current_device()]
         else:
             gpu_ids = ["cpu"]
+        # Predict
         item = prediction.predict_with_halo(
             original_crop,
             model,
@@ -74,13 +112,26 @@ def check_inference(model, path_to_file, path_to_dest, original_shape = (128,)*3
             halo,
             preprocess=minmax_norm
         )
-        if test_function is not None:
-            test_val = test_function(original_crop, label_crop)
+        # TEST ONLY
+        if postprocess:
+            print("Postprocessing crop")
+            foreground_prediction = postprocess_prediction(item[0], item[1], 0.8, True)
+        else:
+            foreground_prediction = item[0]
 
-        # print("Predicted item: ", item.shape)
+        if test_function is not None:
+            test_val = test_function(original_crop, label_crop) # Somehow like this it works??
+            test_val_processed = test_function(foreground_prediction, label_crop)
+            print("Before refinement: ", test_val)
+            print("After refinement: ", test_val_processed)
+            # Should be with item[0]:
+            test_val = test_function(item[0], label_crop)
+            print("Check if this works: ", test_val)
         with h5py.File(path_to_dest, 'r+') as f2:
-            f2.create_dataset("foreground", item[0].shape, np.float32, item[0])
+            f2.create_dataset("foreground", foreground_prediction.shape, np.float32, foreground_prediction)
             f2.create_dataset("boundary", item[0].shape, np.float32, item[1])
+            # ONLY TEST
+            f2.create_dataset("foreground_unprocessed", item[0].shape, np.float32, item[0])
         return test_val
 
     except Exception as e:
@@ -157,8 +208,11 @@ def minmax_norm(x):
     """
     MinMax normalization for each instance of the sample
     """
+    min = 0
+    max = 255
     x = x.astype(np.float32)
-    return (x - x.min()) / (x.max() - x.min() + 1e-8)
+    # return (x - x.min()) / (x.max() - x.min() + 1e-8)
+    return (x - min)/(max - min) # !!! Write down this change
 
 def test_inference_loss(path_to_folder, label_key = "label_crop/mito", foreground_key = "foreground", average = True):
     """
@@ -177,6 +231,8 @@ def test_inference_loss(path_to_folder, label_key = "label_crop/mito", foregroun
     jaccard_metric = JaccardIndex(task="binary")
 
     items = directory_to_path_list(path_to_folder)
+    if not items:
+        raise RuntimeError(f"Folder is empty: {path_to_folder}")
     iou_score = 0
     dice_score = 0
     for item in items:
@@ -207,5 +263,5 @@ def test_inference_loss(path_to_folder, label_key = "label_crop/mito", foregroun
 
 if __name__ == "__main__":
     test_folder = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_inference"
-    x = test_inference_loss(test_folder)
-    print(f"IoU: {x[0]}, dice: {x[1]}")
+    # Test the post processing with some new files from old files
+    # Calculate IOU and dice before and after!!
