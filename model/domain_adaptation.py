@@ -19,30 +19,30 @@ domain_adaptation_mode = "one-step"
 #
 # Hyperparameters
 #
-patch_shape = (160,)*3
+patch_shape = (256,)*3
 lr = 1.0e-4
 val_split = 0.15
 batch_size = 1
 
-old_model_name = "Source-AUNet-128-1"
 best_path = None
 new_model_name = f"AUNet-{patch_shape[0]}-{batch_size}-{domain_adaptation_mode}-DA"
 
 # Path to the checkpoints folder
-save_path = "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/model/"
+save_path = "./model/"
 
 # Internal paths
 raw_key = "/raw_crop"
 label_key = "/label_crop/mito"
 
 # Paths to the data in the target domain
-unlabeled_folder_path = "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/target_unlabeled"
-labeled_folder_path = "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/target_labeled"
+unlabeled_folder_path = "./files/target_unlabeled"
+labeled_folder_path = "./files/target_labeled"
 
 # Path to the data in the source domain
-source_labeled_folder_path = "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/source_labeled"
+source_labeled_folder_path = "./files/source_labeled"
 
 if domain_adaptation_mode == "two-steps":
+    old_model_name = f"Source-AUNet-{patch_shape}-1"
     # Get the data paths from target domain only
     unlabeled_data_paths = directory_to_path_list(unlabeled_folder_path)
     labeled_data_paths = directory_to_path_list(labeled_folder_path)
