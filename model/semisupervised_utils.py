@@ -1,4 +1,4 @@
-# First functions adapted from synapse-net to work with zarrs
+# Training routine taken from synapse-net
 # https://github.com/computational-cell-analytics/synapse-net/blob/main/synapse_net/training/semisupervised_training.py
 
 from typing import Optional, Tuple
@@ -88,13 +88,14 @@ def get_unsupervised_loader(
     ndim = 3
 
     # Transforms and augmentations definition
-    # TODO: implement strong augmentations
+    # TODO: implement strong augmentations?
     raw_transform = torch_em.transform.get_raw_transform()
     transform = torch_em.transform.get_augmentations(ndim=ndim)
     augmentations = (weak_augmentations(), weak_augmentations())
     
+    # Added here crop extracton
     # HDF5 version
-    # Each sample is 512x. Must extract 64 128x crops from each.
+    # Each sample is 512x. Must extract 64 128x crops from each  or 8 256x crops or 27 160x crops
     crops_shape = (slice(0,512),)*3
     rois = get_sub_rois(crops_shape, patch_shape)
     
@@ -114,7 +115,7 @@ def get_unsupervised_loader(
                                         ndim=ndim, n_samples=n_samples_per_ds)
             )
 
-    # ### MODIFIED HERE TO ADAPT TO ZARR  
+    # Modified to extract crops from zarr
     # datasets = [
     #     torch_em.data.RawDataset(data_path, raw_key, patch_shape, raw_transform, transform,
     #                              augmentations=augmentations, roi=get_random_roi(roi, patch_shape, blacklist_roi),
@@ -166,6 +167,7 @@ def semisupervised_training(
             based on the patch_shape and size of the volumes used for validation.
         check: Whether to check the training and validation loaders instead of running training.
     """
+
     # Loading of the previous model if load_path is not None
     if load_path is not None:
         if not os.path.exists(load_path):
@@ -173,11 +175,18 @@ def semisupervised_training(
         model = load_model(load_path, model)
 
     # Keeping the separated paths for now; 
-    
-    train_loader = get_supervised_loader(train_paths[0], raw_key, label_key, patch_shape, batch_size,
-                                         n_samples=n_samples_train)
-    val_loader = get_supervised_loader(val_paths[0], raw_key, label_key, patch_shape, batch_size,
-                                       n_samples=n_samples_val)
+    # Divide in the case unsupervised finetuning and semi supervised one- or two-steps
+    if train_paths[0] != None:
+        train_loader = get_supervised_loader(train_paths[0], raw_key, label_key, patch_shape, batch_size,
+                                            n_samples=n_samples_train)
+    else:
+        train_loader = None
+    if val_paths[0] != None:
+        val_loader = get_supervised_loader(val_paths[0], raw_key, label_key, patch_shape, batch_size,
+                                        n_samples=n_samples_val)
+    else:
+        val_loader = None
+    # Unsupervised loaders must be given
     unsupervised_train_loader = get_unsupervised_loader(train_paths[1], raw_key, patch_shape, batch_size,
                                                         n_samples_epoch=n_samples_train)
     unsupervised_val_loader = get_unsupervised_loader(val_paths[1], raw_key, patch_shape, batch_size,
@@ -293,8 +302,10 @@ def get_supervised_loader(
         label_transform = torch_em.transform.label.connected_components
         # There is also connected_components_with_boundaries
 
+    # Added transforms here
     heavy_transforms = [
-        "RandomAffine3D",         # Might cause information loss  
+        # Ignoring this transform for now, as there is no quick way of reducing the intensity.
+        # "RandomAffine3D",         # Might cause information loss  
         "RandomDepthicalFlip3D", 
         "RandomHorizontalFlip3D", 
         "RandomRotation3D", 
@@ -314,7 +325,7 @@ def get_supervised_loader(
         # sampler = torch_em.data.sampler.MinInstanceSampler(min_num_instances=4)
         # This is the default, but will never work with this dataset; using the only value that works
         # (1) would make it useless.
-        sampler = torch_em.data.sampler.MinForegroundSampler(0.005, 0.999)
+        sampler = torch_em.data.sampler.MinForegroundSampler(0.005, 1)
 
     loader = torch_em.default_segmentation_loader(
         data_paths, raw_key,
