@@ -14,7 +14,7 @@ from model_utils import *
 learning_rate = 1.0e-4      # Learning rate for the optimizer
 batch_size = 1              # Batch size for the dataloader
 epochs = 5000               # Number of epochs to train the model for
-patch_shape = (256,)*3      # Patch shape - size of the volume
+patch_shape = (128,)*3      # Patch shape - size of the volume
 val_split = 0.1             # Fraction of the data to use for validation
 num_workers = 2             # Limit number of cpus
 device = "cuda"             # Device required for training
@@ -87,9 +87,7 @@ optimizer = RAdam(
             model.parameters(), lr = learning_rate, decoupled_weight_decay = True
         )
 # OR adam
-# optimizer = torch.optim.Adam(
-#             model.parameters(), lr = learning_rate, weight_decay=1.0e-4
-        # )
+# optimizer = torch.optim.Adam(model.parameters(), lr = learning_rate)
 
 paths_to_files = directory_to_path_list(data_path)
 
@@ -112,18 +110,7 @@ target_labeled = [  # Crops that belong to the destination domain
     "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/source_labeled/crop_183.h5",
 ]
 
-old_test = [    # Files that used to be in the test set but were moved after the new test crop has been created
-    "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/crop_32.h5",
-    "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/crop_80.h5",
-    "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/crop_101.h5",
-    "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/crop_190.h5",
-    "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/crop_239.h5",
-    "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/crop_248.h5",
-    "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/crop_292.h5",
-    "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/crop_355.h5",
-]
-
-# Train only with source domain crops
+# For the source domain model, remove the target domain files and include the old test files
 paths_to_files = np.setdiff1d(paths_to_files, target_labeled)
 
 train_loader, val_loader = get_dataloader(
