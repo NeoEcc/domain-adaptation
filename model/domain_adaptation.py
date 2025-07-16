@@ -7,20 +7,22 @@ from sklearn.model_selection import train_test_split
 from UNet import model
 
 # Domain adaptation modes - comment or uncomment to select
-domain_adaptation_mode = "one-step"
+# domain_adaptation_mode = "one-step"
     # One step uses the source domain in the labeled data and target domain in the unlabeled data to train a model from scratch.
     # Performs pure semi-supervised training
 # domain_adaptation_mode = "two-steps"
     # Two steps uses the source domain labeled data to train a model, 
     # and unlabeled and few labeled data from the target domain to refine the same model. 
+domain_adaptation_mode = "finetuning"
+    # Finetuning uses unlabeled data to finetune the model
 
 # Name of the model to be used as a base (for two-steps) and the new model and path to checkpoint
 
 #
 # Hyperparameters
 #
-patch_shape = (256,)*3
-lr = 1.0e-4
+patch_shape = (128,)*3
+lr = 5.0e-5
 val_split = 0.15
 batch_size = 1
 
@@ -66,6 +68,16 @@ elif domain_adaptation_mode == "one-step":
     # Make sure not to load any model
     # TODO, as an extra: change this check to allow to load a past model from this same method, check if "one-step" is in the name
     best_path = None
+elif domain_adaptation_mode == "finetuning":
+    old_model_name = f"Source-AUNet-{patch_shape[0]}-1"
+    
+    # Path to the best version of the previous model
+    best_path = f"{save_path}checkpoints/{old_model_name}/best.pt"
+
+    # Dataloaders: only unlabeled is needed, from destination
+    unlabeled_data_paths = directory_to_path_list(unlabeled_folder_path)
+    unlabeled_train_paths, unlabeled_val_paths = train_test_split(unlabeled_data_paths, test_size = val_split, random_state = 42)
+    labeled_train_paths, labeled_val_paths = (None, None)
 else:
     raise ValueError(f"Expected 'one-step' or 'two-steps', got {domain_adaptation_mode}")
     
