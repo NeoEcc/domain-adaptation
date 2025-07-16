@@ -28,8 +28,8 @@ def postprocess_prediction(foreground, boundaries = None, threshold=0.8, instanc
     boundaries = None
     # Binarize the prediction
     prediction = (foreground > threshold)
-    prediction = morphology.remove_small_holes(prediction, 256)
-    prediction = morphology.remove_small_objects(prediction, 64)
+    prediction = morphology.remove_small_holes(prediction, 2048) # 5000 in synapse
+    prediction = morphology.remove_small_objects(prediction, 256)
     if boundaries is not None and instance_separation:
         # TODO: Remove boundaries, later add them back and expand the 
         # labels for ideal instance segmentation
@@ -39,6 +39,7 @@ def postprocess_prediction(foreground, boundaries = None, threshold=0.8, instanc
         prediction = nsbatwm.label(diff, connectivity=1)
         
     prediction = morphology.binary_opening(prediction, None)
+
     if instance_separation:
         # Separate and label
         # prediction = nsbatwm.split_touching_objects(prediction, sigma = 50)
@@ -214,7 +215,7 @@ def minmax_norm(x):
     # return (x - x.min()) / (x.max() - x.min() + 1e-8)
     return (x - min)/(max - min) # !!! Write down this change
 
-def test_inference_loss(path_to_folder, label_key = "label_crop/mito", foreground_key = "foreground", average = True):
+def test_inference_loss(path_to_folder, label_key = "label_crop/mito", foreground_key = "foreground", average = True, memory_saving_level = 1):
     """
     Calculate the total or average loss over all files in a specified folder using IoU and dice loss.
     Args:
@@ -222,9 +223,11 @@ def test_inference_loss(path_to_folder, label_key = "label_crop/mito", foregroun
         label_key (str, optional): Key to access the label data in each file. Defaults to "label_crop/mito".
         foreground_key (str, optional): Key to access the prediction data in each file. Defaults to "foreground".
         average (bool, optional): If True, returns the average loss over all files; otherwise, returns the total loss. Defaults to True.
+        memory_saving_level: how many times the array is divided for the calculation; defaults to 0 (no division)
     Returns:
         float: The average or total loss computed over all files in the folder.
     """
+    prediction_threshold = 0.8
     # Input checks
     if not os.path.exists(path_to_folder):
         raise ValueError("Path does not exist: ", path_to_folder)
@@ -235,31 +238,83 @@ def test_inference_loss(path_to_folder, label_key = "label_crop/mito", foregroun
         raise RuntimeError(f"Folder is empty: {path_to_folder}")
     iou_score = 0
     dice_score = 0
+    ious = []
+    dices = []
     for item in items:
+        # if os.path.basename(item) == "test_crop.h5":
+        #     print("skipped large test crop")
+        #     continue
+        print("Calculating loss for ", os.path.basename(item))
         with h5py.File(item, "r") as f:
-            prediction_arr = np.array(f[foreground_key])
-            label_arr = np.array(f[label_key])
-            # Binarize 
-            pred_tensor = torch.from_numpy(prediction_arr).float()
-            label_tensor = torch.from_numpy(label_arr).float()
-            pred_tensor = (pred_tensor > 0.5).int()
-            label_tensor = (label_tensor > 0.5).int()
-            # Flatten
-            pred_tensor_flat = pred_tensor.view(-1)
-            label_tensor_flat = label_tensor.view(-1)
-            # IoU
-            i_score = jaccard_metric(pred_tensor_flat, label_tensor_flat).item()
-            # Dice loss: 1 - (2 * intersection / (sum of sizes))
-            intersection = (pred_tensor_flat * label_tensor_flat).sum().item()
-            total = pred_tensor_flat.sum().item() + label_tensor_flat.sum().item()
-            d_score = (2.0 * intersection / (total + 1e-8))
+            if memory_saving_level > 1:
+                shape = f[foreground_key].shape
+                msl = memory_saving_level # Just shorter
+                prediction_arr = np.array(f[foreground_key])
+                label_arr = np.array(f[label_key])
+                # Get steps
+                step_z = shape[0] // msl
+                step_y = shape[1] // msl
+                step_x = shape[2] // msl
+                i_score = 0
+                d_score = 0
+                # Iterate over dimensions
+                for iz in range(msl):
+                    for iy in range(msl):
+                        for ix in range(msl):
+                            z_start = iz * step_z
+                            y_start = iy * step_y
+                            x_start = ix * step_x
+                            z_end = (iz + 1) * step_z if iz < msl - 1 else shape[0]
+                            y_end = (iy + 1) * step_y if iy < msl - 1 else shape[1]
+                            x_end = (ix + 1) * step_x if ix < msl - 1 else shape[2]
+                            pred_chunk = prediction_arr[z_start:z_end, y_start:y_end, x_start:x_end]
+                            label_chunk = label_arr[z_start:z_end, y_start:y_end, x_start:x_end]
+                            # Binarize
+                            pred_tensor = torch.from_numpy(pred_chunk).float()
+                            label_tensor = torch.from_numpy(label_chunk).float()
+                            pred_tensor = (pred_tensor > prediction_threshold).int()
+                            label_tensor = (label_tensor > prediction_threshold).int()
+                            # Flatten
+                            pred_tensor_flat = pred_tensor.view(-1)
+                            label_tensor_flat = label_tensor.view(-1)
+                            # IoU
+                            i_score += jaccard_metric(pred_tensor_flat, label_tensor_flat).item()
+                            # Dice loss
+                            intersection = (pred_tensor_flat * label_tensor_flat).sum().item()
+                            total = pred_tensor_flat.sum().item() + label_tensor_flat.sum().item()
+                            d_score += (2.0 * intersection / (total + 1e-8))
+                # Normalize by number of chunks
+                num_chunks = msl ** 3
+                i_score /= num_chunks
+                d_score /= num_chunks
 
+            else:
+                prediction_arr = np.array(f[foreground_key])
+                label_arr = np.array(f[label_key])
+                # Binarize 
+                pred_tensor = torch.from_numpy(prediction_arr).float()
+                label_tensor = torch.from_numpy(label_arr).float()
+                pred_tensor = (pred_tensor > prediction_threshold).int()
+                label_tensor = (label_tensor > prediction_threshold).int()
+                # Flatten
+                pred_tensor_flat = pred_tensor.view(-1)
+                label_tensor_flat = label_tensor.view(-1)
+                # IoU
+                i_score = jaccard_metric(pred_tensor_flat, label_tensor_flat).item()
+                # Dice loss: 1 - (2 * intersection / (sum of sizes))
+                intersection = (pred_tensor_flat * label_tensor_flat).sum().item()
+                total = pred_tensor_flat.sum().item() + label_tensor_flat.sum().item()
+                d_score = (2.0 * intersection / (total + 1e-8))
+        if average:
             iou_score += i_score
             dice_score += d_score
-            print("Predicted ", os.path.basename(item), f"- IoU: {i_score}, dice: {d_score}")
+        else:
+            ious.append(iou_score)
+            dices.append(dice_score)
+        print("Predicted ", os.path.basename(item), f"- IoU: {i_score}, dice: {d_score}")
     if average:
         return (iou_score / len(items), dice_score / len(items))
-    return (iou_score, dice_score)
+    return (ious, dices)
 
 if __name__ == "__main__":
     test_folder = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_inference"
