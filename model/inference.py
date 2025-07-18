@@ -16,19 +16,22 @@ model_names = [
 ]
 model_ID = 3
 model_name = model_names[model_ID]
-data_key = "raw_crop"
+raw_key = "raw_crop"
 label_key = "label_crop/mito"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 if model_ID <= 2:
     # Halo for 128x
+    original_shape = (128,)*3
     block_size = (90,)*3
     halo = (19,)*3
 elif model_ID <= 5:
     # Halo for 160x
+    original_shape = (160,)*3
     block_size = (110,)*3
     halo = (25,)*3
 elif model_ID > 5:
     # Halo for 256x
+    original_shape = (256,)*3
     block_size = (170,)*3
     halo = (43,)*3
 else:
@@ -65,11 +68,12 @@ if __name__ == "__main__":
         print("Checking inference for ", file, " with ", model_name)
         check_inference(
             model, f"{inference_path}{file}", f"{save_inference_path}{file}", 
-            raw_key = data_key, label_key = label_key, postprocess = True
+            original_shape, block_size, halo, raw_key = raw_key, postprocess = True
             )
+        
     # Check test loss
     print("Inference completed. Calculating loss...")
-    x = test_inference_loss(save_inference_path, label_key = label_key, average = True, memory_saving_level= 4)
+    x = test_inference_loss(save_inference_path, label_key = label_key, average = True, memory_saving_level= 1)
     print(f"IoU: {x[0]}, dice: {x[1]}")
 
     old_test = [    # Files that used to be in the test set but were moved to training after the new test crop has been created
