@@ -10,6 +10,8 @@ import os
 import torch
 import torch_em
 import scipy.ndimage
+import numpy as np
+import skimage
 import torch_em.self_training as self_training
 
 def get_sub_rois(original_roi: Tuple[slice], crop_size: Tuple[int]):
@@ -197,7 +199,7 @@ def semisupervised_training(
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
 
     # Self training functionality.
-    pseudo_labeler = self_training.DefaultPseudoLabeler(confidence_threshold=0.9)
+    pseudo_labeler = self_training.DefaultPseudoLabeler(confidence_threshold=0.95)
     loss = self_training.DefaultSelfTrainingLoss()
     loss_and_metric = self_training.DefaultSelfTrainingLossAndMetric()
 
@@ -291,10 +293,8 @@ def get_supervised_loader(
         pass
     elif add_boundary_transform:
         if ignore_label is None:
-            label_transform = torch_em.transform.Compose(
-                torch_em.transform.BoundaryTransform(add_binary_target=True),
-                ExpansionTransform(range = 1)
-                ) # Added large boundaries here
+            # Apply boundary transform and expansion to labels
+            label_transform = BoundaryTransform(add_binary_target=True, expansion = 1)
         else:
             label_transform = torch_em.transform.label.BoundaryTransformWithIgnoreLabel(
                 add_binary_target=True, ignore_label=ignore_label
@@ -341,19 +341,23 @@ def get_supervised_loader(
     )
     return loader
 
-# adding expansion for better training, based on the boundary transforms by torch_em 
-class ExpansionTransform:
+# From torch_em to modify this with thicker boundaries
+class BoundaryTransform:
     """Transformation to convert an instance segmentation into boundaries.
 
+
     Args:
-        range: range of the expansion
+        mode: The mode for converting the segmentation to boundaries.
+        add_binary_target: Whether to add a binary mask channel to the transformation output.
         ndim: The expected dimensionality of the data.
     """
-    def __init__(self, range = 1, ndim: Optional[int] = None):
-        self.range = range
+    def __init__(self, mode: str = "thick", add_binary_target: bool = False, ndim: Optional[int] = None, expansion: Optional[int] = 0):
+        self.mode = mode
+        self.add_binary_target = add_binary_target
         self.ndim = ndim
+        self.expansion = expansion
 
-    def __call__(self, boundaries: np.ndarray) -> np.ndarray:
+    def __call__(self, labels: np.ndarray) -> np.ndarray:
         """Apply the boundary transformation to an input segmentation.
 
         Args:
@@ -362,11 +366,17 @@ class ExpansionTransform:
         Returns:
             The boundaries.
         """
-        
-        # Expand the boundaries by the given range using binary dilation
-        expanded_boundaries = scipy.ndimage.binary_dilation(boundaries, iterations=self.range)
-        return expanded_boundaries.astype(boundaries.dtype)
-
+        # Skipping tests
+        # labels = ensure_array(labels) if self.ndim is None else ensure_spatial_array(labels, self.ndim)
+        boundaries = skimage.segmentation.find_boundaries(labels, mode=self.mode)[None]
+        if self.expansion > 0:
+            boundaries = scipy.ndimage.binary_dilation(boundaries, iterations=self.expansion)
+        if self.add_binary_target:
+            binary = (labels > 0)[None].astype(boundaries.dtype)
+            target = np.concatenate([binary, boundaries], axis=0)
+        else:
+            target = boundaries
+        return target
 
 if __name__ == "__main__":
     # Check label voxels - getting sampler timeout
