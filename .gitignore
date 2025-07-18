@@ -5,6 +5,7 @@ scripts/__pycache__
 scripts/test.py
 model/__pycache__
 model/saves
+model/test.py
 .vscode
 logs
 model/checkpoints
