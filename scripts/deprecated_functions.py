@@ -586,3 +586,47 @@ get_folder_parallel(
     16, 
     folders_to_ignore, 
 )
+
+
+# semisupervised_utils.py
+import scipy
+# adding expansion for better training, based on the boundary transforms by torch_em 
+# Failed to get this to work due to issues passing the parameters correctly.
+class ExpansionTransform:
+    """Transformation to expand boundaries from a BoundaryTransform output.
+
+    Args:
+        range: range of the expansion (number of dilation iterations)
+    """
+    def __init__(self, range = 1):
+        self.range = range
+
+    def __call__(self, target: np.ndarray) -> np.ndarray:
+        """Apply boundary expansion to the output of BoundaryTransform.
+
+        Args:
+            target: The output from BoundaryTransform. 
+                   Shape (2, H, W, D) where target[0] is binary mask, target[1] is boundaries.
+
+        Returns:
+            The expanded target with same shape.
+        """
+        if target.ndim == 4 and target.shape[0] == 2:
+            # Handle BoundaryTransform output with add_binary_target=True
+            foreground = target[0]  # Binary mask
+            boundaries = target[1]  # Boundaries
+            
+            # Expand the boundaries 
+            expanded_boundaries = scipy.ndimage.binary_dilation(boundaries, iterations=self.range)
+            
+            # Concatenate back in the same format
+            result = np.concatenate([
+                foreground[None],  # Add channel dim back
+                expanded_boundaries[None].astype(boundaries.dtype)  # Add channel dim back
+            ], axis=0)
+            
+            return result
+        else:
+            # Handle single boundary array (fallback)
+            expanded_boundaries = scipy.ndimage.binary_dilation(target, iterations=self.range)
+            return expanded_boundaries.astype(target.dtype)
