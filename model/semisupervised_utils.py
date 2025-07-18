@@ -294,7 +294,7 @@ def get_supervised_loader(
             label_transform = torch_em.transform.Compose(
                 torch_em.transform.BoundaryTransform(add_binary_target=True),
                 ExpansionTransform(range = 1)
-                ) # ADD LARGER BOUNDARIES HERE
+                ) # Added large boundaries here
         else:
             label_transform = torch_em.transform.label.BoundaryTransformWithIgnoreLabel(
                 add_binary_target=True, ignore_label=ignore_label
@@ -341,7 +341,7 @@ def get_supervised_loader(
     )
     return loader
 
-# Created based on the boundary transforms by torch_em, adding expansion for better training
+# adding expansion for better training, based on the boundary transforms by torch_em 
 class ExpansionTransform:
     """Transformation to convert an instance segmentation into boundaries.
 
