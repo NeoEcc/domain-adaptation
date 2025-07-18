@@ -89,7 +89,7 @@ def minmax_norm(x):
     max = 255
     x = x.astype(np.float32)
     # return (x - x.min()) / (x.max() - x.min() + 1e-8)
-    return (x - min)/(max - min) # !!! Write down this change
+    return (x - min)/(max - min) 
 
 if __name__ == "__main__":
     test_folder = "/mnt/lustre-emmy-ssd/projects/nim00007/data/mitochondria/files/test_inference"
