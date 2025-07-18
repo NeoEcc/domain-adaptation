@@ -9,6 +9,7 @@ from torch_em.util import load_model
 import os
 import torch
 import torch_em
+import scipy.ndimage
 import torch_em.self_training as self_training
 
 def get_sub_rois(original_roi: Tuple[slice], crop_size: Tuple[int]):
@@ -290,7 +291,10 @@ def get_supervised_loader(
         pass
     elif add_boundary_transform:
         if ignore_label is None:
-            label_transform = torch_em.transform.BoundaryTransform(add_binary_target=True)
+            label_transform = torch_em.transform.Compose(
+                torch_em.transform.BoundaryTransform(add_binary_target=True),
+                ExpansionTransform(range = 1)
+                ) # ADD LARGER BOUNDARIES HERE
         else:
             label_transform = torch_em.transform.label.BoundaryTransformWithIgnoreLabel(
                 add_binary_target=True, ignore_label=ignore_label
@@ -336,6 +340,33 @@ def get_supervised_loader(
         label_dtype=label_dtype, rois=rois, **loader_kwargs,
     )
     return loader
+
+# Created based on the boundary transforms by torch_em, adding expansion for better training
+class ExpansionTransform:
+    """Transformation to convert an instance segmentation into boundaries.
+
+    Args:
+        range: range of the expansion
+        ndim: The expected dimensionality of the data.
+    """
+    def __init__(self, range = 1, ndim: Optional[int] = None):
+        self.range = range
+        self.ndim = ndim
+
+    def __call__(self, boundaries: np.ndarray) -> np.ndarray:
+        """Apply the boundary transformation to an input segmentation.
+
+        Args:
+            labels: The input segmentation.
+
+        Returns:
+            The boundaries.
+        """
+        
+        # Expand the boundaries by the given range using binary dilation
+        expanded_boundaries = scipy.ndimage.binary_dilation(boundaries, iterations=self.range)
+        return expanded_boundaries.astype(boundaries.dtype)
+
 
 if __name__ == "__main__":
     # Check label voxels - getting sampler timeout
