@@ -2,6 +2,8 @@
 # https://github.com/computational-cell-analytics/synapse-net/blob/main/synapse_net/training/semisupervised_training.py
 
 from typing import Optional, Tuple
+import torch_em.trainer
+import torch_em.transform
 from torchvision import transforms
 from torch_em.util import load_model
 
@@ -67,8 +69,6 @@ def get_unsupervised_loader(
     patch_shape: Tuple[int, int, int],
     batch_size: int,
     n_samples_epoch: Optional[int],
-    # roi = None,
-    # blacklist_roi = None,
 ) -> torch.utils.data.DataLoader:
     """Get a dataloader for unsupervised segmentation training.
 
@@ -80,10 +80,6 @@ def get_unsupervised_loader(
         n_samples_epoch: The number of samples per epoch. By default this will be estimated
             based on the patch_shape and size of the volumes used for training.
 
-        Not implemented in this version:
-        # roi: specify a region of interest, can be None.
-        # blacklist_roi: list of regions to be avoided, as array of tuples of slices, or None
-
     Returns:
         The PyTorch dataloader.
     """
@@ -91,7 +87,6 @@ def get_unsupervised_loader(
     ndim = 3
 
     # Transforms and augmentations definition
-    # TODO: implement strong augmentations?
     raw_transform = torch_em.transform.get_raw_transform()
     transform = torch_em.transform.get_augmentations(ndim=ndim)
     augmentations = (weak_augmentations(), weak_augmentations())
@@ -196,7 +191,9 @@ def semisupervised_training(
                                                       n_samples_epoch=n_samples_val)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=10, verbose=True
+        )
 
     # Self training functionality.
     pseudo_labeler = self_training.DefaultPseudoLabeler(confidence_threshold=0.95)
@@ -244,6 +241,8 @@ def weak_augmentations(p: float = 0.75) -> callable:
         transforms.RandomApply([torch_em.transform.raw.AdditiveGaussianNoise(
             scale=(0, 0.15), clip_kwargs=False)], p=p
         ),
+        transforms.RandomApply([torch_em.transform.raw.RandomContrast()], p=p), # Added extra augment
+        transforms.RandomApply([torch_em.transform.raw.PoissonNoise((2.5, 5))], p=p),
     ])
     return torch_em.transform.raw.get_raw_transform(normalizer=norm, augmentation1=aug)
 
@@ -312,7 +311,7 @@ def get_supervised_loader(
         # "RandomAffine3D",         # Might cause information loss  
         "RandomDepthicalFlip3D", 
         "RandomHorizontalFlip3D", 
-        "RandomRotation3D", 
+        # "RandomRotation3D",       # Sems to make predictions terribly wrong
         "RandomVerticalFlip3D", 
         # "RandomElasticDeformation3D"  # Does not work despite being in the list
         # "RandomElasticDeformationStacked" # Does not work either despite passing the assertion
