@@ -1,15 +1,15 @@
 import os
 import numpy as np
 import h5py
-from skimage import morphology
+import gc
 from shutil import copyfile
 import torch
 from torch_em.util import prediction
-from inference_utils import postprocess_prediction
+from inference_utils import postprocess_prediction, test_inference_loss
 from UNet import model, load_model
 
 
-def ensemble_inference(models, shapes, sample, gpu_ids, halos, threshold_per_model = 0.4):
+def ensemble_inference(models, shapes, sample, gpu_ids, halos, foreground_threshold_per_model = 0.75, boundaries_threshold_per_model = 0.66):
     """
     Args:
         models: tuple of models
@@ -45,20 +45,25 @@ def ensemble_inference(models, shapes, sample, gpu_ids, halos, threshold_per_mod
             )
             total_pred += item[0]
             total_bound += item[1]
-                    
-            # Clear GPU memory
+            
+            # memory cleanup
+            del item
+            gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 
         except Exception as e:
             print(f"Error processing model {i+1}: {e}")
             continue
-    thr = threshold_per_model * len(models)
+    
+    thr = foreground_threshold_per_model * len(models)
 
 
-    binarized_bound = (total_bound > 0.8).astype(bool) # Changed threshold for boundaries as they are rarely wrong
+    binarized_bound = (total_bound > boundaries_threshold_per_model * len(models)).astype(bool) # Changed threshold for boundaries as they are rarely wrong
+    
+    gc.collect()
     # Incorporate postprocessing
-    pred = postprocess_prediction(pred, binarized_bound)
+    pred = postprocess_prediction(total_pred, binarized_bound)
 
     print(f"Final threshold: {thr}")
     return pred, binarized_bound
@@ -99,16 +104,15 @@ def check_inference(models, shapes, path_to_file, path_to_dest, halos, raw_key =
         if os.path.exists(path_to_dest):
             os.remove(path_to_dest)
 
+    # Determine the current device: use GPU if available, else CPU
+    if torch.cuda.is_available():
+        gpu_ids = [torch.cuda.current_device()]
+    else:
+        gpu_ids = ["cpu"]
+    
     try:
-        # Determine the current device: use GPU if available, else CPU
-        if torch.cuda.is_available():
-            gpu_ids = [torch.cuda.current_device()]
-        else:
-            gpu_ids = ["cpu"]
         # Predict
         foreground, boundary = ensemble_inference(models, shapes, original_crop, gpu_ids, halos)
-
-
         with h5py.File(path_to_dest, 'r+') as f2:
             f2.create_dataset("foreground", foreground.shape, foreground.dtype , foreground)
             f2.create_dataset("boundary", boundary.shape, boundary.dtype, boundary)
@@ -118,7 +122,6 @@ def check_inference(models, shapes, path_to_file, path_to_dest, halos, raw_key =
         print("Failed to test inference: ", e)
         if os.path.exists(path_to_dest):
             os.remove(path_to_dest)
-
 
 def minmax_norm(x):
     min = 0
@@ -141,14 +144,17 @@ if __name__ == "__main__":
         (160,)*3,
     ]
     halos = [
-        ((70,)*3, (29,)*3),
         ((88,)*3, (20,)*3),
+        ((70,)*3, (29,)*3),
         ((96,)*3, (32,)*3),
     ]
     check_inference(
         models,
         shapes,
-        "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/crop_184.h5",
-        "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_inference/ensamble/test.h5",
+        "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/test_crop.h5",
+        "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_inference/ensamble/test_crop.h5",
+        halos
 
     )
+    x = test_inference_loss("/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_inference/ensamble/", label_key = "label_crop/mito", average = True, memory_saving_level= 1)
+    print(f"IoU: {x[0]}, dice: {x[1]}")
