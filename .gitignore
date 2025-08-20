@@ -9,3 +9,4 @@ model/test.py
 .vscode
 logs
 model/checkpoints
+model/test.py
