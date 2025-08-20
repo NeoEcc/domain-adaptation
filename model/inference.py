@@ -4,17 +4,20 @@ from torch_em.util import load_model
 from inference_utils import check_inference, test_inference_loss
 from UNet import model
 
-# Keys for raw data and for labels
 model_names = [
+    # 128
     "Source-AUNet-128-1",       # 0
     "AUNet-128-1-one-step-DA",  # 1
     "AUNet-128-1-two-steps-DA", # 2 
     "AUNet-128-1-finetuning-DA",# 3
+    # 160
     "AUNet-160-1-one-step-DA",  # 4
     "Source-AUNet-160-1",       # 5
+    # 256
     "Source-AUNet-256-1",       # 6
 ]
-model_ID = 3
+model_ID = 1
+# Keys for raw data and for labels
 model_name = model_names[model_ID]
 raw_key = "raw_crop"
 label_key = "label_crop/mito"
@@ -76,7 +79,7 @@ if __name__ == "__main__":
     x = test_inference_loss(save_inference_path, label_key = label_key, average = True, memory_saving_level= 1)
     print(f"IoU: {x[0]}, dice: {x[1]}")
 
-    old_test = [    # Files that used to be in the test set but were moved to training after the new test crop has been created
+    old_test = [    # Files that used to be in the test set but were moved to training after the new test crop has been created. Useful as tests for internship model
         "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/crop_32.h5",
         "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/crop_80.h5",
         "/mnt/lustre-grete/usr/u15001/mitochondria/mitochondria/files/test_crops/crop_101.h5",
